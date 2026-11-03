@@ -28,7 +28,15 @@ describe("conversation delivery and recovery", () => {
         return json({
           messages:
             ++historyReads > 1
-              ? [{ id: "a", role: "assistant", content: "Hello", created_at: "2026-01-01", status: "complete" }]
+              ? [
+                  {
+                    id: "a",
+                    role: "assistant",
+                    content: "Hello",
+                    created_at: "2026-01-01",
+                    status: "complete",
+                  },
+                ]
               : [],
           next_cursor: null,
         });

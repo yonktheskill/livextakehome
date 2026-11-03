@@ -1,7 +1,17 @@
 "use client";
 import { useEffect, useRef, useState } from "react";
 import { Button, Textarea } from "@headlessui/react";
-import { ArrowDown, ArrowUp, Clock3, KeyRound, LogOut, MessageSquare, RefreshCw, Square, Sun } from "lucide-react";
+import {
+  ArrowDown,
+  ArrowUp,
+  Clock3,
+  KeyRound,
+  LogOut,
+  MessageSquare,
+  RefreshCw,
+  Square,
+  Sun,
+} from "lucide-react";
 import { useAuth } from "./auth";
 import { api, ApiError, type Connection, type User } from "../lib/api";
 import { useConversation } from "../lib/use-conversation";
@@ -274,7 +284,8 @@ export function Chat({ user }: { user: User }) {
               </div>
             </form>
             <p className="composer-hint">
-              Enter to send <span>·</span> Shift + Enter for a new line <span>·</span> Times shown with their time zone
+              Enter to send <span>·</span> Shift + Enter for a new line <span>·</span> Times shown with their
+              time zone
             </p>
           </div>
         </footer>

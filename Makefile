@@ -33,10 +33,12 @@ cleanup-traces:
 	cd backend && uv run python -m app.maintenance cleanup-traces
 format:
 	cd backend && uv run ruff format app tests
+	pnpm --dir frontend format
 lint:
 	cd backend && uv run ruff check app tests
 	cd backend && uv run ruff format --check app tests
 	pnpm --dir frontend lint
+	pnpm --dir frontend format:check
 typecheck:
 	cd backend && uv run mypy app
 	pnpm --dir frontend typecheck

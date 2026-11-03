@@ -1,0 +1,21 @@
+repos:
+  - repo: local
+    hooks:
+      - id: backend-lint
+        name: Backend lint
+        entry: uv run --project backend ruff check backend/app backend/tests
+        language: system
+        pass_filenames: false
+        files: ^backend/.*\.py$
+      - id: backend-format
+        name: Backend formatting
+        entry: uv run --project backend ruff format --check backend/app backend/tests
+        language: system
+        pass_filenames: false
+        files: ^backend/.*\.py$
+      - id: frontend-format
+        name: Frontend formatting
+        entry: pnpm --dir frontend exec prettier --check app components lib tests
+        language: system
+        pass_filenames: false
+        files: ^frontend/.*\.(tsx?|css)$

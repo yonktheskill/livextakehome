@@ -6,7 +6,9 @@ describe("safe assistant content", () => {
   it("renders GFM tables and safe external links", () => {
     render(
       <SafeMarkdown
-        content={"| Meeting | Time |\n| --- | --- |\n| Intro | 10:00 UTC |\n\n[Details](https://cal.com/example)"}
+        content={
+          "| Meeting | Time |\n| --- | --- |\n| Intro | 10:00 UTC |\n\n[Details](https://cal.com/example)"
+        }
       />,
     );
     expect(screen.getByRole("table")).toHaveTextContent("10:00 UTC");

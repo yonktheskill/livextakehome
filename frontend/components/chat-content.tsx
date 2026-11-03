@@ -5,7 +5,9 @@ import type { Receipt } from "../lib/use-conversation";
 export function ActionReceipt({ receipt }: { receipt: Receipt }) {
   // Only explicit, user-facing fields are rendered. Never stringify arbitrary tool payloads.
   const details =
-    receipt.details && typeof receipt.details === "object" ? (receipt.details as Record<string, unknown>) : {};
+    receipt.details && typeof receipt.details === "object"
+      ? (receipt.details as Record<string, unknown>)
+      : {};
   const allowed = ["title", "status", "start", "end", "time_zone", "duration_minutes", "booking_uid"];
   return (
     <article className="receipt">

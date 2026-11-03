@@ -39,7 +39,9 @@ export function useConversation(userId: string | number, onUnauthorized: () => v
     const page = await api<History>(`/chat/history${before ? `?before=${encodeURIComponent(before)}` : ""}`);
     if (!mounted.current || runAtRead !== activeRun.current) return;
     setMessages((previous) =>
-      before ? [...page.messages.filter((m) => !previous.some((p) => p.id === m.id)), ...previous] : page.messages,
+      before
+        ? [...page.messages.filter((m) => !previous.some((p) => p.id === m.id)), ...previous]
+        : page.messages,
     );
     setCursor(page.next_cursor);
   }, []);
@@ -62,7 +64,11 @@ export function useConversation(userId: string | number, onUnauthorized: () => v
         if (abort.signal.aborted || frame.id <= lastId.current) return;
         lastId.current = frame.id;
         const data = frame.data;
-        if (frame.type === "message.delta" && typeof data.message_id === "string" && typeof data.text === "string") {
+        if (
+          frame.type === "message.delta" &&
+          typeof data.message_id === "string" &&
+          typeof data.text === "string"
+        ) {
           const id = data.message_id,
             text = data.text;
           const reset = fresh && !replayed.has(id);
@@ -73,7 +79,13 @@ export function useConversation(userId: string | number, onUnauthorized: () => v
               ? previous.map((m) => (m.id === id ? { ...m, content: (reset ? "" : m.content) + text } : m))
               : [
                   ...previous,
-                  { id, role: "assistant", content: text, status: "streaming", created_at: new Date().toISOString() },
+                  {
+                    id,
+                    role: "assistant",
+                    content: text,
+                    status: "streaming",
+                    created_at: new Date().toISOString(),
+                  },
                 ];
           });
         }
@@ -101,7 +113,9 @@ export function useConversation(userId: string | number, onUnauthorized: () => v
           );
           if (frame.type === "run.failed")
             setError(
-              typeof data.message === "string" ? data.message : "The assistant could not complete this request.",
+              typeof data.message === "string"
+                ? data.message
+                : "The assistant could not complete this request.",
             );
           try {
             sessionStorage.removeItem(key);
@@ -114,12 +128,15 @@ export function useConversation(userId: string | number, onUnauthorized: () => v
         for (let attempt = 0; attempt < 6 && !abort.signal.aborted; attempt++) {
           setStreamState(attempt ? "reconnecting" : "live");
           try {
-            const response = await fetch(`/api/runs/${encodeURIComponent(runId)}/events?after=${lastId.current}`, {
-              credentials: "same-origin",
-              cache: "no-store",
-              signal: abort.signal,
-              headers: { Accept: "text/event-stream", "Last-Event-ID": String(lastId.current) },
-            });
+            const response = await fetch(
+              `/api/runs/${encodeURIComponent(runId)}/events?after=${lastId.current}`,
+              {
+                credentials: "same-origin",
+                cache: "no-store",
+                signal: abort.signal,
+                headers: { Accept: "text/event-stream", "Last-Event-ID": String(lastId.current) },
+              },
+            );
             if (!response.ok)
               throw new ApiError(response.status, `Unable to connect to the response (${response.status}).`);
             if (!response.body) throw new Error("Streaming is unavailable. Reconnect to check your request.");
@@ -144,7 +161,9 @@ export function useConversation(userId: string | number, onUnauthorized: () => v
             // A completed run can close without another frame when reconnecting at its tail.
             const state = await api<{ status: string }>(`/runs/${encodeURIComponent(runId)}`);
             if (
-              ["succeeded", "failed", "interrupted", "waiting_for_user", "needs_reconciliation"].includes(state.status)
+              ["succeeded", "failed", "interrupted", "waiting_for_user", "needs_reconciliation"].includes(
+                state.status,
+              )
             ) {
               event({
                 id: lastId.current + 1,
@@ -221,10 +240,14 @@ export function useConversation(userId: string | number, onUnauthorized: () => v
     sendLock.current = true;
     setSending(true);
     setError("");
-    const submission = retry && pending ? pending : { content: content.trim(), client_request_id: crypto.randomUUID() };
+    const submission =
+      retry && pending ? pending : { content: content.trim(), client_request_id: crypto.randomUUID() };
     setPending(submission);
     try {
-      const accepted = await api<Accepted>("/chat/messages", { method: "POST", body: JSON.stringify(submission) });
+      const accepted = await api<Accepted>("/chat/messages", {
+        method: "POST",
+        body: JSON.stringify(submission),
+      });
       setPending(null);
       setMessages((previous) =>
         previous.some((m) => m.id === accepted.message_id)

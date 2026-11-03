@@ -1,6 +1,15 @@
 "use client";
 import { useState } from "react";
-import { Button, Dialog, DialogPanel, DialogTitle, Description, Field, Input, Label } from "@headlessui/react";
+import {
+  Button,
+  Dialog,
+  DialogPanel,
+  DialogTitle,
+  Description,
+  Field,
+  Input,
+  Label,
+} from "@headlessui/react";
 import { KeyRound, X } from "lucide-react";
 import { api, ApiError, type Connection } from "../lib/api";
 export function ConnectionDialog({
@@ -29,7 +38,10 @@ export function ConnectionDialog({
         onChange({ connected: false, label: null });
       } else
         onChange(
-          await api<Connection>("/connection", { method: "PUT", body: JSON.stringify({ api_key: key.trim() }) }),
+          await api<Connection>("/connection", {
+            method: "PUT",
+            body: JSON.stringify({ api_key: key.trim() }),
+          }),
         );
       setKey("");
       onClose();
@@ -55,7 +67,12 @@ export function ConnectionDialog({
             <span className="dialog-icon">
               <KeyRound size={22} />
             </span>
-            <Button onClick={onClose} disabled={busy} className="icon-button" aria-label="Close connection settings">
+            <Button
+              onClick={onClose}
+              disabled={busy}
+              className="icon-button"
+              aria-label="Close connection settings"
+            >
               <X size={20} />
             </Button>
           </div>
@@ -90,8 +107,8 @@ export function ConnectionDialog({
                 placeholder="Paste your API key"
               />
               <p className="field-hint">
-                Find your key in Cal.com → Settings → Developer → API keys. Your key is sent securely to the backend and
-                never saved in browser storage.
+                Find your key in Cal.com → Settings → Developer → API keys. Your key is sent securely to the
+                backend and never saved in browser storage.
               </p>
             </Field>
             {error && (
@@ -108,8 +125,8 @@ export function ConnectionDialog({
               {confirm ? (
                 <>
                   <p>
-                    Disconnect Cal.com? Your chat history stays available. Pending work will be interrupted; dispatched
-                    actions may still finish.
+                    Disconnect Cal.com? Your chat history stays available. Pending work will be interrupted;
+                    dispatched actions may still finish.
                   </p>
                   <div className="button-row">
                     <Button className="danger-button" disabled={busy} onClick={() => void change(true)}>

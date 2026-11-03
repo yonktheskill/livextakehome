@@ -4,12 +4,16 @@ import { describe, expect, it, vi } from "vitest";
 import { ConnectionDialog } from "../components/connection-dialog";
 describe("Cal.com connection controls", () => {
   it("submits a key only to the backend and displays masked connection status", async () => {
-    const fetcher = vi.fn().mockResolvedValue(new Response(JSON.stringify({ connected: true, label: "••••1234" })));
+    const fetcher = vi
+      .fn()
+      .mockResolvedValue(new Response(JSON.stringify({ connected: true, label: "••••1234" })));
     vi.stubGlobal("fetch", fetcher);
     const changed = vi.fn(),
       close = vi.fn(),
       storage = vi.spyOn(Storage.prototype, "setItem");
-    render(<ConnectionDialog open onClose={close} connection={null} onChange={changed} onUnauthorized={vi.fn()} />);
+    render(
+      <ConnectionDialog open onClose={close} connection={null} onChange={changed} onUnauthorized={vi.fn()} />,
+    );
     const input = screen.getByLabelText("Cal.com API key");
     expect(input).toHaveAttribute("type", "password");
     fireEvent.change(input, { target: { value: "mock-offline-key" } });

@@ -100,7 +100,9 @@ export function AuthForm({ mode }: { mode: "login" | "register" }) {
             {register ? "Already have an account?" : "New to Daylight?"}{" "}
             <Link href={register ? "/login" : "/register"}>{register ? "Sign in" : "Create an account"}</Link>
           </p>
-          <p className="fine-print">Your Cal.com API key stays on the server. You can disconnect it at any time.</p>
+          <p className="fine-print">
+            Your Cal.com API key stays on the server. You can disconnect it at any time.
+          </p>
         </div>
       </section>
     </main>
