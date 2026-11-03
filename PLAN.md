@@ -1,6 +1,6 @@
 # Cal.com conversational booking assistant — implementation plan
 
-Status: discussion draft, revised 2026-11-03. Planning only; implementation starts after we settle the remaining decisions. “Agreed” records the user's decisions; “recommended” remains open to discussion.
+Status: implementation authorized 2026-11-03. The user accepted default settings and requested high-effort subagents and incremental commits. Peewee is the implementation choice. Provider/account-specific behaviour remains subject to engineering verification.
 
 ## 1. Product and agreed decisions
 
@@ -62,11 +62,11 @@ Cancellation confirmation binds to the exact UID and current booking details, no
 
 A request such as “create a 45-minute consultation type” supplies the title and duration, but the reusable template also has scheduling settings. Examples: which availability schedule applies (weekday office hours or weekend hours), the meeting location (video, phone, or in person), preparation buffers, and minimum booking notice. These are settings for future bookings using this type, not the date or attendee of one appointment. See [event-type configuration](https://cal.com/docs/api-reference/v2/event-types/get-an-event-type).
 
-Recommended policy, still open for discussion: use the connected account's default availability schedule and supported default meeting location when each is unambiguous. Ask when either is missing or competing choices exist. These are application selection rules; do not assume Cal.com automatically inherits all account settings. Generate a readable unique slug from the title and handle conflicts explicitly. Use a small documented baseline for other optional fields; do not silently copy fees, recurrence, seats, special questions, or other settings from an unrelated template. We do not need to ask about every optional field to create a basic type. Applying a future preparation-gap preference to Cal.com settings is a separate authorized operation.
+Agreed policy: use the connected account's default availability schedule and supported default meeting location when each is unambiguous. Ask when either is missing or competing choices exist. These are application selection rules; do not assume Cal.com automatically inherits all account settings. Generate a readable unique slug from the title and handle conflicts explicitly. Use a small documented baseline for other optional fields; do not silently copy fees, recurrence, seats, special questions, or other settings from an unrelated template. We do not need to ask about every optional field to create a basic type. Applying a future preparation-gap preference to Cal.com settings is a separate authorized operation.
 
 ## 3. Architecture and stack
 
-Recommended stack: FastAPI, Pydantic, HTTPX, Peewee ORM, and SQLite, with Peewee's versioned migration tooling. Peewee replaces the previous SQLAlchemy/Alembic recommendation; the ORM choice remains a recommendation until agreed. Use `uv` for Python dependencies and `pnpm` for frontend dependencies, with committed lockfiles. Use Next.js App Router, Tailwind CSS, Headless UI React components, and GitHub-flavoured Markdown rendering. Headless UI supplies accessible interaction primitives; Tailwind CSS supplies the visual styling. See [Next.js/Tailwind setup](https://tailwindcss.com/docs/installation/framework-guides/nextjs) and [Headless UI](https://headlessui.com/).
+Recommended stack: FastAPI, Pydantic, HTTPX, Peewee ORM, and SQLite, with Peewee's versioned migration tooling. Peewee replaces the previous SQLAlchemy/Alembic recommendation; the ORM choice is accepted for implementation. Use `uv` for Python dependencies and `pnpm` for frontend dependencies, with committed lockfiles. Use Next.js App Router, Tailwind CSS, Headless UI React components, and GitHub-flavoured Markdown rendering. Headless UI supplies accessible interaction primitives; Tailwind CSS supplies the visual styling. See [Next.js/Tailwind setup](https://tailwindcss.com/docs/installation/framework-guides/nextjs) and [Headless UI](https://headlessui.com/).
 
 ```mermaid
 flowchart TD
