@@ -8,10 +8,10 @@ from app.calcom.client import VERSIONS, CalClient, CalError
 from app.core.security import digest
 from app.db.database import query
 from app.db.dispatch import StalePreparation, prepare_action, settle
-from app.db.models import Action, Connection, Run
-from app.db.repository import claim, emit
+from app.db.models import Action, Connection, Run, User, db
+from app.db.repository import checkpoint, claim, emit
 from app.tools.planning import duration, get_booking, get_type, prepare, slots
-from app.tools.schemas import SCHEMAS
+from app.tools.schemas import SCHEMAS, SavePreferredName
 
 
 class Waiting(Exception):
@@ -40,6 +40,8 @@ class Executor:
             return {
                 "error": "Invalid arguments; use the exact schema and complete required fields."
             }
+        if isinstance(args, SavePreferredName):
+            return await query(self.save_preferred_name, run_id, args.preferred_name)
         run, conn = await query(self.connection, run_id)
         if not conn or not conn.ciphertext:
             return {"error": "Connect your Cal.com account in settings first."}
@@ -141,6 +143,22 @@ class Executor:
             return {"error": str(exc)}
         finally:
             await client.close()
+
+    @staticmethod
+    def save_preferred_name(run_id, preferred_name):
+        with db.atomic("IMMEDIATE"):
+            if not checkpoint(run_id):
+                raise Interrupted()
+            run = Run.get_by_id(run_id)
+            content = " ".join(run.message.content.split())
+            if not re.search(
+                r"(?<!\w)" + re.escape(preferred_name) + r"(?!\w)", content, re.IGNORECASE
+            ):
+                return {"error": "Ask the user to supply their preferred name explicitly."}
+            User.update(preferred_name=preferred_name).where(
+                User.id == run.conversation.user_id
+            ).execute()
+            return {"saved": True, "preferred_name": preferred_name}
 
     @staticmethod
     def explicit_creation(run_id, args):

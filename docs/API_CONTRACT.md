@@ -5,7 +5,7 @@ All backend paths retain `/api` through the Next.js same-origin proxy. JSON erro
 ## Browser API
 
 - `GET /api/health` → `{status:"ok"}`.
-- `POST /api/auth/register` and `/api/auth/login`: `{email,password}` → `{id,email,time_zone}` and session cookie. Registration signs in.
+- `POST /api/auth/register` and `/api/auth/login`: `{email,password}` → `{id,email,time_zone,preferred_name}` and session cookie. Registration signs in. `preferred_name` is nullable and saved through chat when the user supplies their own form of address.
 - `GET /api/auth/me` → user object or 401. `POST /api/auth/logout` → 204.
 - `GET /api/connection` → `{connected:boolean, label:string|null}` (masked only).
 - `PUT /api/connection`: `{api_key}` → masked connection status. `DELETE /api/connection` disconnects integration, not app account.

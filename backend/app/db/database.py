@@ -22,11 +22,11 @@ def initialize(path: str):
     with db.connection_context(), db.atomic("IMMEDIATE"):
         db.create_tables([SchemaVersion])
         version = SchemaVersion.select().order_by(SchemaVersion.version.desc()).first()
-        if version and version.version > 2:
+        if version and version.version > 3:
             raise RuntimeError("Database schema is newer than this application")
         if not version:
             db.create_tables(TABLES)
-            SchemaVersion.create(version=2)
+            SchemaVersion.create(version=3)
         elif version.version == 1:
             migrator = SqliteMigrator(db)
             migrate(
@@ -42,6 +42,13 @@ def initialize(path: str):
                 Action.state.in_(["prepared", "authorized", "awaiting_confirmation"])
             ).execute()
             SchemaVersion.create(version=2)
+        if version and version.version < 3:
+            migrate(
+                SqliteMigrator(db).add_column(
+                    "user", "preferred_name", CharField(null=True, max_length=200)
+                )
+            )
+            SchemaVersion.create(version=3)
 
 
 async def query(fn, *args, **kwargs):

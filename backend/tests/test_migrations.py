@@ -1,6 +1,7 @@
 import time
 
 from peewee import Model
+from playhouse.migrate import SqliteMigrator, migrate
 
 from app.db.database import initialize
 from app.db.models import Action, Confirmation, Conversation, Message, Run, SchemaVersion, User, db
@@ -33,6 +34,7 @@ def test_version_one_dispatch_evidence_upgrade(database):
     Confirmation.create(conversation=conversation, action=old_action.id, expires=time.time() + 600)
     SchemaVersion.delete().execute()
     SchemaVersion.create(version=1)
+    migrate(SqliteMigrator(db).drop_column("user", "preferred_name"))
     path = db.database
     db.close()
     initialize(path)
@@ -40,5 +42,26 @@ def test_version_one_dispatch_evidence_upgrade(database):
         assert {"logical_key", "request"}.issubset({c.name for c in db.get_columns("action")})
         assert Action.get_by_id(old_action.id).state == "superseded"
         assert Confirmation.select().count() == 1
-        assert SchemaVersion.select().order_by(SchemaVersion.version.desc()).get().version == 2
+        assert SchemaVersion.select().order_by(SchemaVersion.version.desc()).get().version == 3
+        assert User.get_by_id(user.id).preferred_name is None
     initialize(path)
+
+
+def test_version_two_profile_upgrade_preserves_accounts(database):
+    user = User.create(email="existing@example.com", password_hash="unchanged")
+    migrate(SqliteMigrator(db).drop_column("user", "preferred_name"))
+    SchemaVersion.delete().execute()
+    SchemaVersion.create(version=2)
+    path = db.database
+    db.close()
+    initialize(path)
+    with db.connection_context():
+        restored = User.get_by_id(user.id)
+        assert restored.email == "existing@example.com"
+        assert restored.password_hash == "unchanged"
+        assert restored.preferred_name is None
+        restored.preferred_name = "Alex"
+        restored.save()
+    initialize(path)
+    with db.connection_context():
+        assert User.get_by_id(user.id).preferred_name == "Alex"

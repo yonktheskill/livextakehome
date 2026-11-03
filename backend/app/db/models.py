@@ -31,6 +31,7 @@ class Base(Model):
 class User(Base):
     id = AutoField()
     email = CharField(unique=True)
+    preferred_name = CharField(null=True, max_length=200)
     password_hash = TextField()
     time_zone = CharField(default="UTC")
     created_at = FloatField(default=time.time)

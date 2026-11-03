@@ -9,6 +9,18 @@ class Arguments(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
 
+class SavePreferredName(Arguments):
+    preferred_name: str = Field(min_length=1, max_length=200)
+
+    @field_validator("preferred_name")
+    @classmethod
+    def clean_name(cls, value):
+        value = " ".join(value.split())
+        if not value or any(not char.isprintable() for char in value):
+            raise ValueError("Provide a nonempty printable name")
+        return value
+
+
 class Range(Arguments):
     start: datetime
     end: datetime
@@ -100,6 +112,7 @@ class CreateType(Arguments):
 
 
 SCHEMAS: dict[str, type[Arguments]] = {
+    "save_preferred_name": SavePreferredName,
     "list_bookings": ListBookings,
     "get_booking": Booking,
     "list_event_types": Arguments,
@@ -111,6 +124,9 @@ SCHEMAS: dict[str, type[Arguments]] = {
     "create_event_type": CreateType,
 }
 DESCRIPTIONS = {
+    "save_preferred_name": "Save the authenticated user's explicitly supplied form of address. "
+    "The name must appear in the current user message. Never infer it from email or attendees. "
+    "Works without a Cal.com connection; can update an existing preferred name.",
     "cancel_booking": "Prepare exact single-booking cancellation; always asks user confirmation.",
     "create_event_type": "Propose reusable personal type using default schedule and Cal Video. "
     "Implicit creation requires confirmation. Clear explicit creation can be authorized.",

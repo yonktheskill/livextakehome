@@ -18,7 +18,12 @@ class Credentials(BaseModel):
 
 
 def public(user):
-    return {"id": user.id, "email": user.email, "time_zone": user.time_zone}
+    return {
+        "id": user.id,
+        "email": user.email,
+        "time_zone": user.time_zone,
+        "preferred_name": user.preferred_name,
+    }
 
 
 def current_sync(raw):

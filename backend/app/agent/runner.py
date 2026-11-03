@@ -192,7 +192,7 @@ class Runner:
                         "step": step,
                         "provider": self.settings.llm_provider,
                         "model": self.settings.llm_model,
-                        "prompt_version": 1,
+                        "prompt_version": 2,
                         "usage": usage,
                         "elapsed_ms": int((time.monotonic() - started) * 1000),
                         "output_chars": len(text),
