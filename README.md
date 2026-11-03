@@ -1,4 +1,4 @@
-# Daylight — conversational Cal.com booking assistant
+# HelpBook — conversational Cal.com booking assistant
 
 Python/FastAPI backend, Peewee/SQLite storage, and Next.js/TypeScript frontend with Tailwind CSS and free Headless UI. Design and product decisions: [PLAN.md](PLAN.md). API boundary: [docs/API_CONTRACT.md](docs/API_CONTRACT.md).
 

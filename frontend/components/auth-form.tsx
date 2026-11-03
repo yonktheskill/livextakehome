@@ -3,9 +3,10 @@ import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { useEffect, useState } from "react";
 import { Button, Field, Input, Label } from "@headlessui/react";
-import { ArrowRight, CalendarDays } from "lucide-react";
+import { ArrowRight } from "lucide-react";
 import { useAuth } from "./auth";
 import { SecretInput } from "./secret-input";
+import { Brand } from "./brand";
 export function AuthForm({ mode }: { mode: "login" | "register" }) {
   const { user, loading, authenticate } = useAuth();
   const router = useRouter();
@@ -36,12 +37,7 @@ export function AuthForm({ mode }: { mode: "login" | "register" }) {
   return (
     <main className="auth-shell">
       <section className="auth-story">
-        <Link className="brand" href="/">
-          <span className="brand-icon">
-            <CalendarDays size={23} />
-          </span>
-          daylight<span className="brand-dot">.</span>
-        </Link>
+        <Brand />
         <div>
           <span className="eyebrow">A LITTLE SPACE IN YOUR DAY</span>
           <h1>
@@ -114,7 +110,7 @@ export function AuthForm({ mode }: { mode: "login" | "register" }) {
             </Button>
           </form>
           <p className="auth-switch">
-            {register ? "Already have an account?" : "New to Daylight?"}{" "}
+            {register ? "Already have an account?" : "New to HelpBook?"}{" "}
             <Link href={register ? "/login" : "/register"}>{register ? "Sign in" : "Create an account"}</Link>
           </p>
           <p className="fine-print">

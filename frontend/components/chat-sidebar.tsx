@@ -1,8 +1,8 @@
 "use client";
-import Link from "next/link";
 import { Button, Menu, MenuButton, MenuItem, MenuItems } from "@headlessui/react";
-import { CalendarDays, ChevronDown, KeyRound, LogOut, MessageSquare, Sun } from "lucide-react";
+import { ChevronDown, LogOut } from "lucide-react";
 import type { Connection, User } from "../lib/api";
+import { Brand } from "./brand";
 export function ChatSidebar({
   user,
   connection,
@@ -18,36 +18,18 @@ export function ChatSidebar({
 }) {
   return (
     <aside className="sidebar">
-      <Link href="/" className="brand">
-        <span className="brand-icon">
-          <CalendarDays size={23} />
-        </span>
-        daylight<span className="brand-dot">.</span>
-      </Link>
-      <div className="workspace-label">YOUR WORKSPACE</div>
-      <div className="active-nav">
-        <MessageSquare size={18} />
-        <span>Your conversation</span>
-        <span className="nav-dot" />
-      </div>
-      <div className="sidebar-note">
-        <Sun size={23} />
-        <h2>A calmer kind of calendar.</h2>
-        <p>Ask naturally. We’ll work through the details together.</p>
-      </div>
+      <Brand />
+      <div className="active-nav">Chat</div>
       <div className="sidebar-bottom">
         <Button className="connection-card" onClick={() => onConnect()}>
-          <span className="connection-card-icon">
-            <KeyRound size={18} />
-          </span>
           <span>
             <strong>Cal.com</strong>
             <small>
               {connection?.connected
                 ? connection.label || "Connected"
                 : connection === null
-                  ? "Check connection"
-                  : "Connect your account"}
+                  ? "Checking…"
+                  : "Connect"}
             </small>
           </span>
           <span className={`status-dot ${connection?.connected ? "" : "offline"}`} />

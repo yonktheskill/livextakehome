@@ -1,4 +1,4 @@
-# Daylight frontend
+# HelpBook frontend
 
 Next.js App Router, TypeScript, Tailwind CSS and free Headless UI components. Authentication uses backend session cookies. The app provides one ongoing conversation, Cal.com connection management, safe Markdown tables, action receipts, Stop and correction controls.
 

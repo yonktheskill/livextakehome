@@ -98,7 +98,7 @@ def main():
             )
             ready(base)
             with urllib.request.urlopen(base + "/login", timeout=10) as response:
-                assert response.status == 200 and b"Daylight" in response.read()
+                assert response.status == 200 and b"HelpBook" in response.read()
             user = request("/auth/register", {"email": email, "password": password})
             assert request("/auth/me")["id"] == user["id"]
             assert request("/connection")["connected"] is False

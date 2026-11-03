@@ -1,17 +1,7 @@
 "use client";
 import { useEffect, useRef, useState } from "react";
 import { Button, Textarea } from "@headlessui/react";
-import {
-  ArrowDown,
-  ArrowUp,
-  Clock3,
-  KeyRound,
-  LogOut,
-  MessageSquare,
-  RefreshCw,
-  Square,
-  Sun,
-} from "lucide-react";
+import { ArrowDown, ArrowUp, BookOpen, LogOut, RefreshCw, Square } from "lucide-react";
 import { useAuth } from "./auth";
 import { api, ApiError, type Connection, type User } from "../lib/api";
 import { useConversation } from "../lib/use-conversation";
@@ -19,6 +9,7 @@ import { ConnectionDialog } from "./connection-dialog";
 import { ChatSidebar } from "./chat-sidebar";
 import { ActionReceipt, Welcome } from "./chat-content";
 import { SafeMarkdown } from "./markdown";
+import { Brand } from "./brand";
 export function Chat({ user }: { user: User }) {
   const { logout, refresh } = useAuth();
   const chat = useConversation(user.id, refresh);
@@ -88,16 +79,9 @@ export function Chat({ user }: { user: User }) {
       />
       <main className="chat-main">
         <header className="chat-header">
-          <div>
-            <span className="mobile-brand">daylight.</span>
-            <h1>Your conversation</h1>
-            <p>One place to keep your day in motion.</p>
-          </div>
+          <Brand className="mobile-brand" />
           <div className="header-actions">
-            <span className="timezone">
-              <Clock3 size={14} />
-              {user.time_zone}
-            </span>
+            <span className="timezone">{user.time_zone}</span>
             <Button className="connection-pill" onClick={() => setDialog(true)}>
               <span className={`status-dot ${connection?.connected ? "" : "offline"}`} />
               {connection?.connected ? "Cal.com connected" : "Connect Cal.com"}
@@ -124,11 +108,8 @@ export function Chat({ user }: { user: User }) {
         )}
         {connection && !connection.connected && (
           <div className="connection-banner">
-            <KeyRound size={17} />
-            <span>Connect Cal.com to check availability and manage bookings.</span>
-            <Button onClick={() => setDialog(true)}>
-              Connect <ArrowUp className="rotate-45" size={14} />
-            </Button>
+            <span>Connect Cal.com to manage bookings.</span>
+            <Button onClick={() => setDialog(true)}>Connect</Button>
           </div>
         )}
         <div
@@ -143,7 +124,7 @@ export function Chat({ user }: { user: User }) {
             {chat.loading ? (
               <div className="loading-state" role="status">
                 <span className="loading-orbit" />
-                Opening your conversation…
+                Loading…
               </div>
             ) : (
               <>
@@ -168,11 +149,15 @@ export function Chat({ user }: { user: User }) {
                       className={`message ${message.role === "user" ? "message-user" : "message-assistant"}`}
                     >
                       <div className="message-avatar">
-                        {message.role === "user" ? user.email[0].toUpperCase() : <Sun size={19} />}
+                        {message.role === "user" ? (
+                          user.email[0].toUpperCase()
+                        ) : (
+                          <BookOpen size={19} aria-hidden="true" />
+                        )}
                       </div>
                       <div className="message-body">
                         <div className="message-label">
-                          {message.role === "user" ? "You" : "Daylight"}
+                          {message.role === "user" ? "You" : "HelpBook"}
                           <span>
                             {new Date(message.created_at).toLocaleTimeString([], {
                               hour: "numeric",
@@ -207,7 +192,7 @@ export function Chat({ user }: { user: User }) {
             )}
             {chat.pending && !chat.sending && (
               <div className="recovery-box">
-                <p>Delivery wasn’t confirmed. Retry this exact message safely with the same request ID.</p>
+                <p>Message delivery wasn’t confirmed.</p>
                 <Button
                   className="text-button"
                   disabled={chat.sending}
@@ -235,15 +220,6 @@ export function Chat({ user }: { user: User }) {
                 {chat.streamState === "paused" && <Button onClick={chat.reconnect}>Reconnect</Button>}
               </div>
             ) : null}
-            {chat.run && (
-              <div className="execution-bar">
-                <span>You can send a correction while I work.</span>
-                <Button className="stop-button" disabled={chat.stopping} onClick={() => void chat.stop()}>
-                  <Square size={11} fill="currentColor" />
-                  {chat.stopping ? "Stopping…" : "Stop"}
-                </Button>
-              </div>
-            )}
             <form
               className="composer"
               onSubmit={(e) => {
@@ -252,7 +228,7 @@ export function Chat({ user }: { user: User }) {
               }}
             >
               <label className="sr-only" htmlFor="message">
-                Message Daylight
+                Message HelpBook
               </label>
               <Textarea
                 id="message"
@@ -260,7 +236,7 @@ export function Chat({ user }: { user: User }) {
                 value={draft}
                 onChange={(e) => setDraft(e.target.value)}
                 maxLength={16000}
-                placeholder={chat.run ? "A change of plan? Tell me…" : "What would you like to plan?"}
+                placeholder="Message HelpBook…"
                 rows={2}
                 onKeyDown={(e) => {
                   if (e.key === "Enter" && !e.shiftKey && !e.nativeEvent.isComposing) {
@@ -270,35 +246,45 @@ export function Chat({ user }: { user: User }) {
                 }}
               />
               <div className="composer-bottom">
-                <span>
-                  <MessageSquare size={13} /> {chat.run ? "Corrections welcome" : "Your scheduling assistant"}
-                </span>
-                <Button
-                  aria-label={chat.run ? "Send correction" : "Send message"}
-                  className="send-button"
-                  type="submit"
-                  disabled={!draft.trim() || chat.sending || chat.loading || !!chat.pending}
-                >
-                  {chat.sending ? <span className="button-loader" /> : <ArrowUp size={19} />}
-                </Button>
+                {chat.run ? (
+                  <Button
+                    aria-label={chat.stopping ? "Stopping response" : "Stop response"}
+                    title={chat.stopping ? "Stopping…" : "Stop response"}
+                    className="send-button stop-button"
+                    type="button"
+                    disabled={chat.stopping}
+                    onClick={() => void chat.stop()}
+                  >
+                    {chat.stopping ? (
+                      <span className="button-loader" />
+                    ) : (
+                      <Square size={17} fill="currentColor" />
+                    )}
+                  </Button>
+                ) : (
+                  <Button
+                    aria-label="Send message"
+                    className="send-button"
+                    type="submit"
+                    disabled={!draft.trim() || chat.sending || chat.loading || !!chat.pending}
+                  >
+                    {chat.sending ? <span className="button-loader" /> : <ArrowUp size={22} />}
+                  </Button>
+                )}
               </div>
             </form>
-            <p className="composer-hint">
-              Enter to send <span>·</span> Shift + Enter for a new line <span>·</span> Times shown with their
-              time zone
-            </p>
           </div>
+          <Button
+            className="scroll-bottom"
+            aria-label="Scroll to latest message"
+            onClick={() => {
+              nearBottom.current = true;
+              bottom.current?.scrollIntoView({ behavior: "smooth" });
+            }}
+          >
+            <ArrowDown size={17} />
+          </Button>
         </footer>
-        <Button
-          className="scroll-bottom"
-          aria-label="Scroll to latest message"
-          onClick={() => {
-            nearBottom.current = true;
-            bottom.current?.scrollIntoView({ behavior: "smooth" });
-          }}
-        >
-          <ArrowDown size={17} />
-        </Button>
       </main>
       {dialog && (
         <ConnectionDialog

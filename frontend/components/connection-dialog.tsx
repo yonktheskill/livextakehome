@@ -70,7 +70,7 @@ export function ConnectionDialog({
           </div>
           <DialogTitle className="dialog-title">Your Cal.com connection</DialogTitle>
           <Description className="muted">
-            Connect your account so Daylight can check availability and manage your bookings.
+            Connect your account so HelpBook can check availability and manage your bookings.
           </Description>
           {connection?.connected && (
             <div className="connection-current">

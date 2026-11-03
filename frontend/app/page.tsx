@@ -14,7 +14,7 @@ export default function Page() {
     return (
       <main className="page-loading" role="status">
         <span className="loading-orbit" />
-        Opening Daylight…
+        Opening HelpBook…
       </main>
     );
   if (error)
