@@ -3,7 +3,8 @@ import json
 import logging
 import time
 
-from app.agent.context import assemble, authorized, retrieve
+from app.agent.context import assemble, authorized, covered_sources, estimate, fit_prompt, retrieve
+from app.agent.tracing import record_tool
 from app.db.database import query
 from app.db.models import Message, Run, Trace, db
 from app.db.repository import checkpoint, claim_run, cleanup, emit, finish, mark_uncertain, recover
@@ -97,12 +98,6 @@ class Runner:
         if not await query(checkpoint, run_id):
             raise Interrupted()
         pending = await query(authorized, run_id)
-        messages = await query(assemble, run_id)
-        if pending:
-            result = await self.executor.execute(run_id, *pending)
-            messages.append(
-                {"role": "system", "content": "Confirmed action result: " + json.dumps(result)}
-            )
         tools = definitions() + [
             {
                 "type": "function",
@@ -118,10 +113,41 @@ class Runner:
                 },
             }
         ]
-        total_calls = 0
+        exchanges: list[list[dict]] = []
+        if pending:
+            # Check mandatory intent/reserves before dispatching an authorized action.
+            await query(assemble, run_id, self.settings, tools)
+            result = await self.tool(run_id, pending[0], pending[1], "confirmed-action")
+            exchanges.append(
+                [
+                    {
+                        "role": "assistant",
+                        "content": None,
+                        "tool_calls": [
+                            {
+                                "id": "confirmed-action",
+                                "type": "function",
+                                "function": {
+                                    "name": pending[0],
+                                    "arguments": json.dumps(pending[1]),
+                                },
+                            }
+                        ],
+                    },
+                    {
+                        "role": "tool",
+                        "tool_call_id": "confirmed-action",
+                        "content": json.dumps(result),
+                    },
+                ]
+            )
+        total_calls = int(bool(pending))
+        seen_call_ids = {"confirmed-action"} if pending else set()
         for step in range(self.settings.max_model_steps):
             if not await query(checkpoint, run_id):
                 raise Interrupted()
+            base = await query(assemble, run_id, self.settings, tools)
+            messages = fit_prompt(base, exchanges, tools, self.settings)
             calls, text = [], ""
             usage = {}
             started = time.monotonic()
@@ -130,7 +156,10 @@ class Runner:
                     raise Interrupted()
                 if event.kind == "text_delta":
                     text += event.text
-                    if len(text) > 24000:
+                    if (
+                        len(text) > 24000
+                        or estimate(text, self.settings) > self.settings.context_output_tokens
+                    ):
                         raise RuntimeError("Output budget exceeded")
                     await query(self.append, run_id, event.text)
                 elif event.kind == "usage":
@@ -142,6 +171,14 @@ class Runner:
                         and v >= 0
                     }
                 elif event.kind == "tool_call":
+                    if (
+                        not isinstance(event.call_id, str)
+                        or not event.call_id
+                        or event.call_id in seen_call_ids
+                        or not isinstance(event.arguments, dict)
+                    ):
+                        raise RuntimeError("Invalid tool call protocol")
+                    seen_call_ids.add(event.call_id)
                     calls.append(event)
                     total_calls += 1
                     if len(calls) > 8 or total_calls > self.settings.max_tool_calls:
@@ -166,7 +203,7 @@ class Runner:
             if not calls:
                 await query(finish, run_id, "succeeded", "run.completed", {})
                 return
-            messages.append(
+            exchange = [
                 {
                     "role": "assistant",
                     "content": text or None,
@@ -179,28 +216,66 @@ class Runner:
                         for c in calls
                     ],
                 }
-            )
+            ]
             for call in calls:
                 if not await query(checkpoint, run_id):
                     raise Interrupted()
                 await query(emit, run_id, "tool.status", {"text": f"Checking {call.name}"})
-                if call.name == "search_history":
-                    result = await query(retrieve, run_id, str(call.arguments.get("query", "")))
-                else:
-                    result = await self.executor.execute(run_id, call.name, call.arguments)
-                await query(
-                    Trace.create,
-                    run=run_id,
-                    kind="tool",
-                    payload=json.dumps(
-                        {"name": call.name, "call_id": call.call_id, "ok": "error" not in result}
-                    ),
+                result = await self.tool(
+                    run_id,
+                    call.name,
+                    call.arguments,
+                    call.call_id,
+                    excluded=covered_sources(messages + exchange),
                 )
-                messages.append(
+                exchange.append(
                     {
                         "role": "tool",
                         "tool_call_id": call.call_id,
-                        "content": json.dumps(result)[:20000],
+                        "content": json.dumps(result),
                     }
                 )
+            exchanges.append(exchange)
         raise RuntimeError("Model step budget exceeded")
+
+    async def tool(self, run_id, name, arguments, call_id, *, excluded=None):
+        started = time.monotonic()
+        result, error = None, None
+        try:
+            if name == "search_history":
+                if (
+                    not isinstance(arguments, dict)
+                    or set(arguments) != {"query"}
+                    or not isinstance(arguments["query"], str)
+                ):
+                    result = {"error": "Invalid history query arguments"}
+                else:
+                    result = await query(
+                        retrieve, run_id, arguments["query"], excluded, self.settings
+                    )
+            else:
+                result = await self.executor.execute(run_id, name, arguments)
+            return result
+        except BaseException as exc:
+            # Exception text may contain upstream credentials or private prompts.
+            error = (
+                type(exc).__name__
+                if isinstance(
+                    exc,
+                    (Waiting, Interrupted, UnknownOutcome, TimeoutError, asyncio.CancelledError),
+                )
+                else "ToolExecutionError"
+            )
+            raise
+        finally:
+            await query(
+                record_tool,
+                run_id,
+                name,
+                call_id,
+                arguments,
+                result,
+                int((time.monotonic() - started) * 1000),
+                self.settings,
+                error=error,
+            )
