@@ -1,5 +1,5 @@
 "use client";
-import { useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { Button, Textarea } from "@headlessui/react";
 import { ArrowDown, ArrowUp, BookOpen, LogOut, RefreshCw, Square } from "lucide-react";
 import { useAuth } from "./auth";
@@ -20,10 +20,14 @@ export function Chat({ user }: { user: User }) {
   const [draft, setDraft] = useState("");
   const [accountError, setAccountError] = useState("");
   const [loggingOut, setLoggingOut] = useState(false);
-  const bottom = useRef<HTMLDivElement>(null);
   const input = useRef<HTMLTextAreaElement>(null);
   const scroll = useRef<HTMLDivElement>(null);
   const nearBottom = useRef(true);
+  const scrollToBottom = useCallback((behavior: ScrollBehavior) => {
+    const el = scroll.current;
+    // Keep ancestor containers (including the overflow-hidden app shell) in place.
+    el?.scrollTo({ top: Math.max(0, el.scrollHeight - el.clientHeight), behavior });
+  }, []);
   async function loadConnection() {
     setConnectionError("");
     try {
@@ -49,8 +53,8 @@ export function Chat({ user }: { user: User }) {
     };
   }, [refresh]);
   useEffect(() => {
-    if (nearBottom.current) bottom.current?.scrollIntoView({ behavior: "instant", block: "end" });
-  }, [chat.messages, chat.status, chat.receipts]);
+    if (nearBottom.current) scrollToBottom("instant");
+  }, [chat.messages, chat.status, chat.receipts, scrollToBottom]);
   async function submit() {
     if (!draft.trim() || chat.pending) return;
     const sent = draft;
@@ -206,7 +210,6 @@ export function Chat({ user }: { user: User }) {
                 </Button>
               </div>
             )}
-            <div ref={bottom} />
           </div>
         </div>
         <footer className="composer-area">
@@ -281,7 +284,7 @@ export function Chat({ user }: { user: User }) {
             aria-label="Scroll to latest message"
             onClick={() => {
               nearBottom.current = true;
-              bottom.current?.scrollIntoView({ behavior: "smooth" });
+              scrollToBottom("smooth");
             }}
           >
             <ArrowDown size={17} />

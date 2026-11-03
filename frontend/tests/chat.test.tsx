@@ -11,17 +11,17 @@ const user = { id: 1, email: "owner@example.test", time_zone: "UTC" };
 const json = (value: unknown) => new Response(JSON.stringify(value));
 
 describe("chat composer controls", () => {
-  const originalScroll = Object.getOwnPropertyDescriptor(HTMLElement.prototype, "scrollIntoView");
+  const originalScroll = Object.getOwnPropertyDescriptor(HTMLElement.prototype, "scrollTo");
   const originalClipboard = Object.getOwnPropertyDescriptor(navigator, "clipboard");
   beforeEach(() => {
     sessionStorage.clear();
-    Object.defineProperty(HTMLElement.prototype, "scrollIntoView", { configurable: true, value: vi.fn() });
+    Object.defineProperty(HTMLElement.prototype, "scrollTo", { configurable: true, value: vi.fn() });
   });
   afterEach(() => {
     if (originalClipboard) Object.defineProperty(navigator, "clipboard", originalClipboard);
     else Reflect.deleteProperty(navigator, "clipboard");
-    if (originalScroll) Object.defineProperty(HTMLElement.prototype, "scrollIntoView", originalScroll);
-    else Reflect.deleteProperty(HTMLElement.prototype, "scrollIntoView");
+    if (originalScroll) Object.defineProperty(HTMLElement.prototype, "scrollTo", originalScroll);
+    else Reflect.deleteProperty(HTMLElement.prototype, "scrollTo");
     vi.restoreAllMocks();
     vi.unstubAllGlobals();
   });
