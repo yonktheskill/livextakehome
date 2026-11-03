@@ -9,7 +9,8 @@ from pydantic import BaseModel, Field
 
 from app.api.auth import current
 from app.db.database import query
-from app.db.models import Conversation, Event, Message, Run, Trace
+from app.db.dispatch import receipt
+from app.db.models import Action, Conversation, Event, Message, Run, Trace
 from app.db.repository import TERMINAL, accept, stop
 
 router = APIRouter(prefix="/api")
@@ -50,7 +51,24 @@ async def history(request: Request, before: str | None = None):
         page = list(rows.order_by(Message.created_at.desc(), Message.id.desc()).limit(51))
         has_more = len(page) > 50
         page = page[:50]
+        page_ids = [m.id for m in page]
+        run_ids = Run.select(Run.id).where(Run.message.in_(page_ids))
+        action_ids = [
+            m.client_request_id[7:]
+            for m in page
+            if m.client_request_id and m.client_request_id.startswith("action:")
+        ]
+        receipts = (
+            Action.select()
+            .join(Run)
+            .where(
+                (Run.conversation == conv)
+                & (Action.state == "succeeded")
+                & ((Action.run.in_(run_ids)) | (Action.id.in_(action_ids)))
+            )
+        )
         return {
+            "receipts": [receipt(a) for a in receipts],
             "messages": [
                 {
                     "id": m.id,

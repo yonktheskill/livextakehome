@@ -44,6 +44,11 @@ export function useConversation(userId: string | number, onUnauthorized: () => v
         : page.messages,
     );
     setCursor(page.next_cursor);
+    if (page.receipts)
+      setReceipts((previous) => {
+        const combined = before ? [...previous, ...page.receipts!] : page.receipts!;
+        return [...new Map(combined.map((r) => [r.action_id, r])).values()];
+      });
   }, []);
   const connect = useCallback(
     (runId: string, fresh = true) => {

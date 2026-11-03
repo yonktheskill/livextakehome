@@ -1,14 +1,14 @@
 import json
 import re
-import time
 from datetime import datetime
 
 from pydantic import ValidationError
 
-from app.calcom.client import CalClient, CalError
+from app.calcom.client import VERSIONS, CalClient, CalError
 from app.core.security import digest
 from app.db.database import query
-from app.db.models import Action, Confirmation, Connection, Run, db
+from app.db.dispatch import StalePreparation, prepare_action, settle
+from app.db.models import Action, Connection, Run
 from app.db.repository import claim, emit
 from app.tools.planning import duration, get_booking, get_type, prepare, slots
 from app.tools.schemas import SCHEMAS
@@ -75,7 +75,22 @@ class Executor:
                 name == "create_event_type" and not explicit
             )
             action_id, waiting = await query(
-                self.prepare_action, run, conn, name, encoded, fingerprint, confirmation_required
+                self.prepare_action,
+                run,
+                conn,
+                name,
+                encoded,
+                fingerprint,
+                confirmation_required,
+                {
+                    "method": "POST",
+                    "path": path,
+                    "payload": payload,
+                    "version": VERSIONS[path.split("/")[2]],
+                    "validation": details,
+                    "request_revision": run.revision,
+                    "connection_generation": conn.generation,
+                },
             )
             if waiting:
                 prompt = (
@@ -88,10 +103,19 @@ class Executor:
                 )
                 await query(emit, run_id, "tool.status", {"text": text})
                 raise Waiting(text)
+            frozen_action = await query(Action.get_by_id, action_id)
+            if frozen_action.state in {"succeeded", "failed"}:
+                return json.loads(frozen_action.result)
             if not await query(claim, action_id):
                 raise Interrupted()
             try:
-                result = await client.request("POST", path, payload=payload)
+                frozen = json.loads(frozen_action.request)
+                result = await client.request(
+                    frozen["method"],
+                    frozen["path"],
+                    payload=frozen["payload"],
+                    version=frozen["version"],
+                )
                 identity_field = "id" if name == "create_event_type" else "uid"
                 if not isinstance(result, dict) or not result.get(identity_field):
                     raise CalError(
@@ -110,18 +134,9 @@ class Executor:
                 return {"error": str(exc)}
             outcome = {"response": result, "validated": details}
             await query(self.record, action_id, "succeeded", outcome)
-            await query(
-                emit,
-                run_id,
-                "action.result",
-                {
-                    "action_id": action_id,
-                    "kind": name,
-                    "summary": "Cal.com accepted the request; see returned booking status.",
-                    "details": outcome,
-                },
-            )
             return outcome
+        except StalePreparation:
+            raise Interrupted() from None
         except CalError as exc:
             return {"error": str(exc)}
         finally:
@@ -153,41 +168,8 @@ class Executor:
         conn = Connection.get_or_none(Connection.user == run.conversation.user)
         return run, conn
 
-    @staticmethod
-    def prepare_action(run, conn, name, encoded, fingerprint, confirmation_required):
-        with db.atomic("IMMEDIATE"):
-            existing = Action.get_or_none(
-                (Action.run == run.id)
-                & (Action.kind == name)
-                & (Action.inputs == encoded)
-                & (Action.state == "authorized")
-            )
-            if existing:
-                if existing.fingerprint != fingerprint:
-                    existing.state = "superseded"
-                    existing.save()
-                else:
-                    return existing.id, False
-            action = Action.create(
-                run=run.id,
-                revision=run.revision,
-                generation=conn.generation,
-                kind=name,
-                inputs=encoded,
-                fingerprint=fingerprint,
-                state="awaiting_confirmation" if confirmation_required else "prepared",
-            )
-            if confirmation_required:
-                Confirmation.create(
-                    conversation=run.conversation_id, action=action, expires=time.time() + 600
-                )
-            return action.id, confirmation_required
-
-    @staticmethod
-    def record(action_id, state, result):
-        Action.update(state=state, result=json.dumps(result)).where(
-            Action.id == action_id
-        ).execute()
+    prepare_action = staticmethod(prepare_action)
+    record = staticmethod(settle)
 
     @staticmethod
     async def read(client, name, args, conn):

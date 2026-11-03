@@ -28,9 +28,9 @@ class CalClient:
             trust_env=False,
         )
 
-    async def request(self, method, path, *, params=None, payload=None):
+    async def request(self, method, path, *, params=None, payload=None, version=None):
         resource = path.split("/")[2]
-        version = VERSIONS.get(
+        version = version or VERSIONS.get(
             "bookings_list" if path == "/v2/bookings" and method == "GET" else resource
         )
         headers = {"cal-api-version": version} if version else {}

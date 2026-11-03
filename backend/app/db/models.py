@@ -100,6 +100,8 @@ class Action(Base):
     generation = IntegerField()
     kind = CharField()
     inputs = TextField()
+    logical_key = CharField(null=True, unique=True)
+    request = TextField(default="{}")
     fingerprint = CharField()
     state = CharField(default="prepared", index=True)
     result = TextField(default="{}")

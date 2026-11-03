@@ -45,11 +45,9 @@ def accept(user, content, request_id):
         if existing:
             run = Run.get(Run.message == existing)
             return {"run_id": run.id, "message_id": existing.id, "revision": run.revision}
+        previous_revision = conv.revision
         conv.revision += 1
         conv.save()
-        Run.update(interrupted=True).where(
-            (Run.conversation == conv) & (Run.status.in_(["queued", "running"]))
-        ).execute()
         msg = Message.create(
             conversation=conv,
             role="user",
@@ -60,15 +58,25 @@ def accept(user, content, request_id):
         pending = list(
             Confirmation.select()
             .join(Action)
+            .join(Run)
             .where(
                 (Confirmation.conversation == conv)
                 & (Confirmation.consumed == False)  # noqa: E712
                 & (Confirmation.expires > time.time())
                 & (Action.state == "awaiting_confirmation")
+                & (Action.revision == previous_revision)
+                & (Run.revision == previous_revision)
+                & (Run.interrupted == False)  # noqa: E712
             )
         )
         yes = content.strip().lower() in {"yes", "confirm", "yes, confirm", "confirm cancellation"}
         selected = pending[0] if yes and len(pending) == 1 else None
+        if selected and content.strip().lower() == "confirm cancellation":
+            if selected.action.kind != "cancel_booking":
+                selected = None
+        Run.update(interrupted=True).where(
+            (Run.conversation == conv) & (Run.status.in_(["queued", "running"]))
+        ).execute()
         Action.update(state="superseded").where(
             (Action.run.in_(Run.select(Run.id).where(Run.conversation == conv)))
             & (Action.state.in_(["prepared", "authorized", "awaiting_confirmation"]))
@@ -143,6 +151,15 @@ def claim(action_id):
                 return False
             confirmation.consumed = True
             confirmation.save()
+        frozen = json.loads(action.request)
+        frozen["dispatch_authorization"] = {
+            "revision": run.revision,
+            "connection_generation": conn.generation,
+            "action_id": action.id,
+            "fingerprint": action.fingerprint,
+            "confirmation_message_id": confirmation.evidence_message_id if confirmation else None,
+        }
+        action.request = json.dumps(frozen)
         action.state = "dispatching"
         action.save()
         return True
