@@ -2,6 +2,8 @@ SHELL := /bin/sh
 -include .env.local
 export
 export NEXT_TELEMETRY_DISABLED := 1
+FRONTEND_PORT ?= 3002
+PUBLIC_ORIGIN ?= http://localhost:$(FRONTEND_PORT)
 BACKEND_EXTRAS = $(if $(filter codex,$(LLM_PROVIDER)),--extra codex,)
 
 .PHONY: help setup init-dev dev dev-backend dev-frontend up down logs migrate cleanup-traces format lint typecheck test test-backend test-frontend build check smoke-containers setup-codex codex-login test-codex
@@ -22,7 +24,7 @@ dev:
 dev-backend:
 	cd backend && uv run $(BACKEND_EXTRAS) uvicorn app.main:app --reload --host 127.0.0.1 --port 8000 --no-access-log
 dev-frontend:
-	env -u MASTER_SECRET -u MASTER_SECRET_PREVIOUS -u OPENROUTER_API_KEY -u LIVEX_CODEX_AUTH_HOME pnpm --dir frontend dev
+	env -u MASTER_SECRET -u MASTER_SECRET_PREVIOUS -u OPENROUTER_API_KEY -u LIVEX_CODEX_AUTH_HOME pnpm --dir frontend dev --port $(FRONTEND_PORT)
 up:
 	docker compose --env-file .env.local up --build -d
 down:

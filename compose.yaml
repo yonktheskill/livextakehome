@@ -4,7 +4,7 @@ services:
     environment:
       MASTER_SECRET: ${MASTER_SECRET:?Run make init-dev and configure .env.local}
       DATABASE_PATH: /app/data/app.sqlite3
-      PUBLIC_ORIGIN: ${PUBLIC_ORIGIN:-http://localhost:3000}
+      PUBLIC_ORIGIN: ${PUBLIC_ORIGIN:-http://localhost:3002}
       COOKIE_SECURE: ${COOKIE_SECURE:-false}
       LLM_PROVIDER: ${LLM_PROVIDER:-codex}
       LLM_MODEL: ${LLM_MODEL:-}
@@ -25,7 +25,7 @@ services:
       args:
         BACKEND_URL: http://backend:8000
     ports:
-      - "127.0.0.1:3000:3000"
+      - "127.0.0.1:${FRONTEND_PORT:-3002}:3000"
     environment:
       NEXT_TELEMETRY_DISABLED: "1"
     depends_on:

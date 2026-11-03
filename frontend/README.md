@@ -6,7 +6,7 @@ Next.js App Router, TypeScript, Tailwind CSS and free Headless UI components. Au
 
 ```sh
 pnpm install --frozen-lockfile
-pnpm dev
+pnpm dev --port 3002
 ```
 
 The backend defaults to `http://localhost:8000`. Set `BACKEND_URL` to override it **before starting development or building production**. Next.js compiles rewrites into its production build; changing this variable only at `start` time does not change the destination. The Dockerfile accepts a `BACKEND_URL` build argument and defaults to `http://backend:8000`.

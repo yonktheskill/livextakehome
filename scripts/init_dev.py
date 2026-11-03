@@ -15,7 +15,8 @@ with os.fdopen(
     file.write(
         f"MASTER_SECRET={key}\n"
         "DATABASE_PATH=data/app.sqlite3\n"
-        "PUBLIC_ORIGIN=http://localhost:3000\n"
+        "FRONTEND_PORT=3002\n"
+        "PUBLIC_ORIGIN=http://localhost:3002\n"
         "COOKIE_SECURE=false\n"
         "LLM_PROVIDER=codex\n"
         "LLM_MODEL=gpt-6.1-sol\n"

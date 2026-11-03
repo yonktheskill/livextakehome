@@ -9,7 +9,7 @@ class Settings(BaseSettings):
     database_path: str = "data/app.sqlite3"
     master_secret: str = ""
     master_secret_previous: list[str] = Field(default_factory=list)
-    public_origin: str = "http://localhost:3000"
+    public_origin: str = "http://localhost:3002"
     cookie_secure: bool = False
     session_days: int = 7
     llm_provider: str = "codex"
