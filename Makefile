@@ -1,8 +1,10 @@
 SHELL := /bin/sh
 -include .env.local
 export
+export NEXT_TELEMETRY_DISABLED := 1
+BACKEND_EXTRAS = $(if $(filter codex,$(LLM_PROVIDER)),--extra codex,)
 
-.PHONY: help setup init-dev dev dev-backend dev-frontend up down logs migrate cleanup-traces format lint typecheck test test-backend test-frontend build check smoke-containers
+.PHONY: help setup init-dev dev dev-backend dev-frontend up down logs migrate cleanup-traces format lint typecheck test test-backend test-frontend build check smoke-containers setup-codex codex-login test-codex
 help:
 	@echo "setup / init-dev   Install dependencies / create private local configuration"
 	@echo "dev               Start frontend and backend (Ctrl-C stops both)"
@@ -18,9 +20,9 @@ dev:
 	@$(MAKE) dev-backend & backend_pid=$$!; $(MAKE) dev-frontend & frontend_pid=$$!; \
 	trap 'kill $$backend_pid $$frontend_pid 2>/dev/null || true' INT TERM EXIT; wait
 dev-backend:
-	cd backend && uv run uvicorn app.main:app --reload --host 127.0.0.1 --port 8000 --no-access-log
+	cd backend && uv run $(BACKEND_EXTRAS) uvicorn app.main:app --reload --host 127.0.0.1 --port 8000 --no-access-log
 dev-frontend:
-	pnpm --dir frontend dev
+	env -u MASTER_SECRET -u MASTER_SECRET_PREVIOUS -u OPENROUTER_API_KEY -u LIVEX_CODEX_AUTH_HOME pnpm --dir frontend dev
 up:
 	docker compose --env-file .env.local up --build -d
 down:
@@ -53,3 +55,10 @@ check: lint typecheck test
 
 smoke-containers:
 	python3 scripts/smoke_containers.py
+
+setup-codex:
+	uv sync --project backend --extra codex --python 3.13
+codex-login:
+	cd backend && uv run --extra codex python ../scripts/codex_login.py
+test-codex:
+	cd backend && uv run --extra codex pytest -q tests/test_providers*.py

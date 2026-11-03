@@ -31,12 +31,29 @@ def create_app(settings=None, provider=None):
                 from app.providers.factory import create_provider
 
                 if settings.llm_provider == "codex":
-                    raise RuntimeError(
-                        "Codex runtime isolation is not verified; adapter is disabled. "
-                        "See docs/provider-notes.md. Select LLM_PROVIDER=fake explicitly for "
-                        "offline demo, or configure openrouter with LLM_MODEL and a project "
-                        "OPENROUTER_API_KEY. No paid fallback is automatic."
-                    )
+                    import os
+                    from importlib.metadata import PackageNotFoundError, version
+                    from pathlib import Path
+
+                    from app.providers.codex import SDK_VERSION
+
+                    home = os.getenv("LIVEX_CODEX_AUTH_HOME", "")
+                    if (
+                        os.getenv("LIVEX_CODEX_ENABLED") != "1"
+                        or not settings.llm_model
+                        or not home
+                        or not Path(home).is_absolute()
+                    ):
+                        raise RuntimeError(
+                            "Codex requires explicit development opt-in, LLM_MODEL and a "
+                            "dedicated absolute LIVEX_CODEX_AUTH_HOME; "
+                            "see docs/codex-development.md. No paid fallback is automatic."
+                        )
+                    try:
+                        if version("openai-codex") != SDK_VERSION:
+                            raise RuntimeError("Install the pinned Codex development extra.")
+                    except PackageNotFoundError:
+                        raise RuntimeError("Install with make setup-codex first.") from None
                 try:
                     runtime_provider = create_provider(
                         settings.llm_provider,

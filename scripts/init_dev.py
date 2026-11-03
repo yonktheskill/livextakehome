@@ -18,6 +18,11 @@ with os.fdopen(
         "PUBLIC_ORIGIN=http://localhost:3000\n"
         "COOKIE_SECURE=false\n"
         "LLM_PROVIDER=codex\n"
+        "LLM_MODEL=gpt-6.1-sol\n"
+        "LIVEX_CODEX_ENABLED=1\n"
+        f"LIVEX_CODEX_AUTH_HOME={Path.home() / '.local' / 'share' / 'livex-codex-login'}\n"
         "BACKEND_URL=http://localhost:8000\n"
     )
-print("Created private .env.local. Select a usable provider before starting chat.")
+print(
+    "Created private .env.local. Run make setup-codex and make codex-login before starting chat."
+)

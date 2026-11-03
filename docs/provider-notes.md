@@ -70,42 +70,14 @@ and releases the HTTP response; disconnecting may not stop upstream billing for
 all OpenRouter providers. There is no automatic retry of malformed streams or
 mutations, and no Cal.com request in this package.
 
-## Codex: explicit unsupported/unsafe-runtime result
+## Codex: verified opt-in development adapter
 
-**The Codex development path is intentionally disabled. It is not a working model
-adapter, and no live isolation, account access or model execution has been proved.**
-`CodexProvider.stream()` checks installed distribution metadata only, then raises
-`sdk_unavailable` or `unsafe_runtime`. It never imports/constructs a runtime client,
-reads sign-in files, accepts API keys, starts a subprocess, or falls back to a paid
-API. This satisfies the permitted fail-closed outcome; it does not satisfy live
-Codex inference or streaming parity.
-
-Inspection of actual 0.163.0 installed Python source and signatures established:
-
-- `AsyncCodex(CodexConfig(...))` controls a local app-server. Entering its context
-  initializes the runtime; this was **not** done.
-- `CodexConfig` accepts `env`, `cwd`, and `config_overrides`. These are configuration
-  surfaces, not proof that host files or model tools are inaccessible.
-- `AsyncCodex.thread_start` accepts `ephemeral`, `base_instructions`,
-  `developer_instructions`, model and sandbox parameters, supporting fresh context.
-- `AsyncThread.run` accepts `output_schema`, but exposes no explicit `max_steps`,
-  `max_output_tokens`, or per-call model-tool allowlist parameters. That is a finding
-  about this high-level API, not proof that no lower-level solution can exist.
-- Documented read-only sandbox mode still permits reading host files; approval
-  mode by itself does not prevent reads or tools permitted by a sandbox.
-- App-server dynamic tool integration is experimental. Merely supplying a schema
-  or asking the model not to use shell tools does not enforce this task's boundary.
-
-A future enablement needs a verified denial of **all** built-in shell/filesystem,
-network and integration tools, a scrubbed process environment, no access to project
-secrets/config, a narrowly scoped developer authentication mechanism, bounded
-internal inference/output, cancellation cleanup and mocked contract tests for the
-actual enforcement surface. Each model step must use a fresh thread and a structured
-next-decision schema containing only text and named application-tool proposals;
-the app must validate and execute every proposal. Do not enable based on prompt
-instructions, a read-only working directory, or a mocked successful completion alone.
-The current tests verify the failure boundary and inspect official API shapes only;
-they do not claim runtime isolation or structured-decision execution.
+The initial disabled spike has been superseded by the account-backed adapter.
+See [Codex development setup and evidence](codex-development.md). The real pinned
+runtime has been checked against a credential-free loopback fixture to send no
+executable model tools. Every application tool remains a validated proposal.
+Production OpenRouter behaviour is unchanged. Live account inference is untested.
+Codex emits one validated response chunk and has no verified hard token ceiling.
 
 ## Sources checked 2026-11-03
 

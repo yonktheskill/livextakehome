@@ -18,6 +18,7 @@ jobs:
           cache-dependency-path: frontend/pnpm-lock.yaml
       - run: make setup
       - run: make check
+      - run: make test-codex
       - run: make build
         env:
           NEXT_TELEMETRY_DISABLED: "1"

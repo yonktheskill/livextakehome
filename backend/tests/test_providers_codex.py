@@ -3,8 +3,8 @@
 import asyncio
 import json
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
-from types import SimpleNamespace
 from threading import Thread
+from types import SimpleNamespace
 
 import pytest
 
@@ -17,7 +17,10 @@ def notification(method, payload):
 
 
 async def collect(provider, tools=None):
-    return [event async for event in provider.stream([{"role": "user", "content": "Hello"}], tools or [])]
+    return [
+        event
+        async for event in provider.stream([{"role": "user", "content": "Hello"}], tools or [])
+    ]
 
 
 @pytest.fixture
@@ -29,18 +32,33 @@ def sdk(monkeypatch):
         instances = []
         events = None
         failure = None
+        account_type = "chatgpt"
 
         def __init__(self, config, approval_handler):
             self.config = config
             self.approval_handler = approval_handler
             self.closed = False
             self.instances.append(self)
-            self.events = iter(type(self).events or [
-                notification("item/completed", {"item": {"type": "agentMessage", "text": json.dumps({
-                    "assistant_text": "Hello", "tool_proposals": [],
-                })}}),
-                notification("turn/completed", {"turn": {"status": "completed"}}),
-            ])
+            self.events = iter(
+                type(self).events
+                or [
+                    notification(
+                        "item/completed",
+                        {
+                            "item": {
+                                "type": "agentMessage",
+                                "text": json.dumps(
+                                    {
+                                        "assistant_text": "Hello",
+                                        "tool_proposals": [],
+                                    }
+                                ),
+                            }
+                        },
+                    ),
+                    notification("turn/completed", {"turn": {"status": "completed"}}),
+                ]
+            )
 
         def start(self):
             if self.failure:
@@ -48,6 +66,15 @@ def sdk(monkeypatch):
 
         def initialize(self):
             pass
+
+        def account_read(self, params):
+            assert params == {"refreshToken": False}
+            from openai_codex.generated.v2_all import GetAccountResponse
+
+            data = {"type": self.account_type}
+            if self.account_type == "chatgpt":
+                data.update(email=None, planType="plus")
+            return GetAccountResponse.model_validate({"account": data, "requiresOpenaiAuth": True})
 
         def thread_start(self, params):
             self.thread_params = params
@@ -104,33 +131,54 @@ async def test_pinned_construction_fresh_threads_and_scrubbed_launch(sdk, tmp_pa
 
 @pytest.mark.asyncio
 async def test_batch_validated_before_any_event(sdk, tmp_path):
-    sdk.events = [notification("item/completed", {"item": {"type": "agentMessage", "text": json.dumps({
-        "assistant_text": "Proposed", "tool_proposals": [
-            {"name": "list_bookings", "arguments_json": "{}"},
-            {"name": "unknown", "arguments_json": "{}"},
-        ],
-    })}}), notification("turn/completed", {"turn": {"status": "completed"}})]
+    sdk.events = [
+        notification(
+            "item/completed",
+            {
+                "item": {
+                    "type": "agentMessage",
+                    "text": json.dumps(
+                        {
+                            "assistant_text": "Proposed",
+                            "tool_proposals": [
+                                {"name": "list_bookings", "arguments_json": "{}"},
+                                {"name": "unknown", "arguments_json": "{}"},
+                            ],
+                        }
+                    ),
+                }
+            },
+        ),
+        notification("turn/completed", {"turn": {"status": "completed"}}),
+    ]
     seen = []
     with pytest.raises(ProviderError):
-        async for event in provider(tmp_path).stream([], [{"type": "function", "function": {"name": "list_bookings"}}]):
+        async for event in provider(tmp_path).stream(
+            [], [{"type": "function", "function": {"name": "list_bookings"}}]
+        ):
             seen.append(event)
     assert seen == []
     assert sdk.instances[0].closed
 
 
-@pytest.mark.parametrize("raw", [
-    '{"assistant_text":"x","assistant_text":"y","tool_proposals":[]}',
-    '{"assistant_text":"x","tool_proposals":[{"name":"list","arguments_json":"[]"}]}',
-    '{"assistant_text":"x","tool_proposals":[{"name":"list","arguments_json":"{\\"x\\":NaN}"}]}',
-    '{"assistant_text":"x","tool_proposals":[],"extra":true}',
-])
+@pytest.mark.parametrize(
+    "raw",
+    [
+        '{"assistant_text":"x","assistant_text":"y","tool_proposals":[]}',
+        '{"assistant_text":"x","tool_proposals":[{"name":"list","arguments_json":"[]"}]}',
+        '{"assistant_text":"x","tool_proposals":[{"name":"list","arguments_json":"{\\"x\\":NaN}"}]}',
+        '{"assistant_text":"x","tool_proposals":[],"extra":true}',
+    ],
+)
 def test_strict_decision(raw):
     with pytest.raises(ValueError):
         adapter._decision(raw, ["list"], ProviderLimits())
 
 
 def test_valid_proposals_only_and_unique_ids():
-    raw = json.dumps({"assistant_text": "", "tool_proposals": [{"name": "list", "arguments_json": "{}"}]})
+    raw = json.dumps(
+        {"assistant_text": "", "tool_proposals": [{"name": "list", "arguments_json": "{}"}]}
+    )
     a = adapter._decision(raw, ["list"], ProviderLimits())
     b = adapter._decision(raw, ["list"], ProviderLimits())
     assert a[0].name == "list" and a[0].arguments == {}
@@ -139,7 +187,9 @@ def test_valid_proposals_only_and_unique_ids():
 
 
 @pytest.mark.asyncio
-@pytest.mark.parametrize("failure", [RuntimeError("secret-upstream-detail"), asyncio.CancelledError()])
+@pytest.mark.parametrize(
+    "failure", [RuntimeError("secret-upstream-detail"), asyncio.CancelledError()]
+)
 async def test_cleanup_and_sanitized_errors(sdk, tmp_path, failure):
     sdk.failure = failure
     if isinstance(failure, asyncio.CancelledError):
@@ -189,18 +239,45 @@ async def test_actual_runtime_has_zero_tools_and_structured_output(monkeypatch, 
             self.send_response(200)
             self.send_header("Content-Type", "text/event-stream")
             self.end_headers()
-            item = {"id": "msg_fixture", "type": "message", "role": "assistant", "status": "completed",
-                    "content": [{"type": "output_text", "text": text, "annotations": []}]}
+            item = {
+                "id": "msg_fixture",
+                "type": "message",
+                "role": "assistant",
+                "status": "completed",
+                "content": [{"type": "output_text", "text": text, "annotations": []}],
+            }
             events = [
                 ("response.created", {"response": {"id": "resp_fixture", "status": "in_progress"}}),
-                ("response.output_item.added", {"output_index": 0, "item": {**item, "content": []}}),
-                ("response.output_text.delta", {"item_id": "msg_fixture", "output_index": 0, "content_index": 0, "delta": text}),
+                (
+                    "response.output_item.added",
+                    {"output_index": 0, "item": {**item, "content": []}},
+                ),
+                (
+                    "response.output_text.delta",
+                    {
+                        "item_id": "msg_fixture",
+                        "output_index": 0,
+                        "content_index": 0,
+                        "delta": text,
+                    },
+                ),
                 ("response.output_item.done", {"output_index": 0, "item": item}),
-                ("response.completed", {"response": {"id": "resp_fixture", "status": "completed", "output": [item],
-                    "usage": {"input_tokens": 1, "output_tokens": 1, "total_tokens": 2}}}),
+                (
+                    "response.completed",
+                    {
+                        "response": {
+                            "id": "resp_fixture",
+                            "status": "completed",
+                            "output": [item],
+                            "usage": {"input_tokens": 1, "output_tokens": 1, "total_tokens": 2},
+                        }
+                    },
+                ),
             ]
             for kind, data in events:
-                self.wfile.write(f"event: {kind}\ndata: {json.dumps({'type': kind, **data})}\n\n".encode())
+                self.wfile.write(
+                    f"event: {kind}\ndata: {json.dumps({'type': kind, **data})}\n\n".encode()
+                )
             self.wfile.flush()
 
     server = ThreadingHTTPServer(("127.0.0.1", 0), Handler)
@@ -213,15 +290,33 @@ async def test_actual_runtime_has_zero_tools_and_structured_output(monkeypatch, 
         # Override only the test runtime. The production adapter fixes OpenAI and
         # ChatGPT login; it exposes no arbitrary endpoint or paid-key option.
         c.launch_args_override += (
-            "-c", 'forced_login_method="api"', "-c", 'model_provider="fixture"',
-            "-c", 'model_providers.fixture={name="fixture",base_url="http://127.0.0.1:' + str(server.server_port) + '",wire_api="responses",requires_openai_auth=false,request_max_retries=0,stream_max_retries=0}',
+            "-c",
+            'forced_login_method="api"',
+            "-c",
+            'model_provider="fixture"',
+            "-c",
+            'model_providers.fixture={name="fixture",base_url="http://127.0.0.1:'
+            + str(server.server_port)
+            + '",wire_api="responses",requires_openai_auth=false,'
+            "request_max_retries=0,stream_max_retries=0}",
         )
         return c
 
     import openai_codex.client
+
     real_client = openai_codex.client.CodexClient
 
     class FixtureClient(real_client):
+        def account_read(self, params):
+            from openai_codex.generated.v2_all import GetAccountResponse
+
+            return GetAccountResponse.model_validate(
+                {
+                    "account": {"type": "chatgpt", "email": None, "planType": "plus"},
+                    "requiresOpenaiAuth": True,
+                }
+            )
+
         def thread_start(self, params):
             return super().thread_start({**params, "modelProvider": "fixture"})
 
@@ -238,3 +333,58 @@ async def test_actual_runtime_has_zero_tools_and_structured_output(monkeypatch, 
         server.shutdown()
         server.server_close()
         thread.join(timeout=2)
+
+
+@pytest.mark.asyncio
+async def test_timeout_closes_blocked_reader(sdk, tmp_path, monkeypatch):
+    from threading import Event
+
+    stopped = Event()
+    original_close = sdk.close
+
+    def blocked(self, turn_id):
+        stopped.wait(2)
+        raise RuntimeError("reader stopped")
+
+    def close(self):
+        original_close(self)
+        stopped.set()
+
+    monkeypatch.setattr(sdk, "next_turn_notification", blocked)
+    monkeypatch.setattr(sdk, "close", close)
+    with pytest.raises(ProviderError) as error:
+        await collect(provider(tmp_path, limits=ProviderLimits(timeout_seconds=0.05)))
+    assert error.value.code == "timeout"
+    assert stopped.is_set()
+    assert sdk.instances[0].closed
+
+
+@pytest.mark.asyncio
+async def test_runtime_tool_item_is_rejected(sdk, tmp_path):
+    sdk.events = [notification("item/completed", {"item": {"type": "commandExecution"}})]
+    with pytest.raises(ProviderError):
+        await collect(provider(tmp_path))
+    assert sdk.instances[0].closed
+
+
+def test_shutdown_before_start_prevents_launch():
+    class Client:
+        def start(self):
+            pytest.fail("must not launch after shutdown")
+
+        def close(self):
+            pass
+
+    process = adapter._Process(Client())
+    process.close()
+    process.start()
+
+
+@pytest.mark.asyncio
+async def test_api_key_account_rejected_before_thread(sdk, tmp_path):
+    sdk.account_type = "apiKey"
+    with pytest.raises(ProviderError) as error:
+        await collect(provider(tmp_path))
+    assert error.value.code == "account_required"
+    assert not hasattr(sdk.instances[0], "thread_params")
+    assert sdk.instances[0].closed

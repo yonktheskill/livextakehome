@@ -93,6 +93,6 @@ def test_default_codex_startup_guidance_is_fail_closed(tmp_path):
         master_secret=Fernet.generate_key().decode(),
         llm_provider="codex",
     )
-    with pytest.raises(RuntimeError, match="isolation is not verified"):
+    with pytest.raises(RuntimeError, match="explicit development opt-in"):
         with TestClient(create_app(settings)):
             pass
