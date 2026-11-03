@@ -9,6 +9,7 @@ import { ConnectionDialog } from "./connection-dialog";
 import { ChatSidebar } from "./chat-sidebar";
 import { ActionReceipt, Welcome } from "./chat-content";
 import { SafeMarkdown } from "./markdown";
+import { MessageCopy } from "./message-copy";
 import { Brand } from "./brand";
 export function Chat({ user }: { user: User }) {
   const { logout, refresh } = useAuth();
@@ -166,6 +167,7 @@ export function Chat({ user }: { user: User }) {
                           </span>
                         </div>
                         <SafeMarkdown content={message.content} />
+                        <MessageCopy content={message.content} />
                       </div>
                     </article>
                   ))}
