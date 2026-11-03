@@ -36,7 +36,8 @@ async def test_runner_persists_chunks_before_replay_and_finishes(account):
     message = Message.get(Message.client_request_id == f"assistant:{run_id}")
     assert message.content == "Hello there" and message.status == "final"
     events = list(Event.select().where(Event.run == run_id).order_by(Event.sequence))
-    assert [e.kind for e in events] == ["message.delta", "message.delta", "run.completed"]
+    assert [e.kind for e in events] == ["message.delta", "run.completed"]
+    assert json.loads(events[0].payload)["text"] == "Hello there"
     assert json.loads(events[0].payload)["message_id"] == message.id
 
 
@@ -125,7 +126,7 @@ async def test_correction_interrupts_before_tool_dispatch(account):
 
 
 @pytest.mark.asyncio
-async def test_provider_failure_keeps_partial_canonical_message(account):
+async def test_provider_failure_does_not_publish_unchecked_partial_message(account):
     user, vault = account
     run_id = accept(user, "hello", str(uuid4()))["run_id"]
 
@@ -137,7 +138,8 @@ async def test_provider_failure_keeps_partial_canonical_message(account):
     runner = Runner(Settings(llm_provider="fake"), vault, BrokenProvider())
     await runner.execute(run_id)
     assert Run.get_by_id(run_id).status == "failed"
-    assert Message.get(Message.client_request_id == f"assistant:{run_id}").status == "failed"
+    assert not Message.select().where(Message.client_request_id == f"assistant:{run_id}").exists()
+    assert not Event.select().where(Event.kind == "message.delta").exists()
     assert "private upstream" not in "".join(e.payload for e in Event.select())
 
 

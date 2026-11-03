@@ -8,6 +8,7 @@ from fastapi.responses import StreamingResponse
 from pydantic import BaseModel, Field
 
 from app.api.auth import current
+from app.core.guardrails import SAFE_OUTPUT, ContentRejected, reason, safe_data, safe_text
 from app.db.database import query
 from app.db.dispatch import receipt
 from app.db.models import Action, Conversation, Event, Message, Run, Trace
@@ -73,7 +74,7 @@ async def history(request: Request, before: str | None = None):
                 {
                     "id": m.id,
                     "role": m.role,
-                    "content": m.content,
+                    "content": safe_text(m.content),
                     "created_at": datetime.fromtimestamp(m.created_at, UTC).isoformat(),
                     "status": m.status,
                 }
@@ -90,7 +91,10 @@ async def submit(data: Submission, request: Request):
     user = await current(request)
     if not data.content.strip():
         raise HTTPException(422, "Message cannot be blank.")
-    return await query(accept, user, data.content, str(data.client_request_id))
+    try:
+        return await query(accept, user, data.content, str(data.client_request_id))
+    except ContentRejected as exc:
+        raise HTTPException(422, str(exc)) from None
 
 
 @router.get("/runs/{run_id}")
@@ -117,13 +121,30 @@ async def events(run_id: str, request: Request, after: int = 0):
         raise HTTPException(400, "Invalid event cursor.") from None
 
     def batch(cursor):
+        run = Run.get_by_id(run_id)
         rows = list(
             Event.select()
             .where((Event.run == run_id) & (Event.sequence > cursor))
             .order_by(Event.sequence)
             .limit(100)
         )
-        return [(r.sequence, r.kind, r.payload) for r in rows], Run.get_by_id(run_id).status
+        public = []
+        checked_messages = {}
+        for row in rows:
+            payload = safe_data(json.loads(row.payload))
+            if row.kind == "message.delta":
+                # Legacy events may split a prohibited term across chunks. Check
+                # the complete canonical message, not only this replay fragment.
+                message_id = payload.get("message_id")
+                if message_id not in checked_messages:
+                    message = Message.get_or_none(
+                        (Message.id == message_id) & (Message.conversation == run.conversation_id)
+                    )
+                    checked_messages[message_id] = not message or bool(reason(message.content))
+                if checked_messages[message_id]:
+                    payload["text"] = SAFE_OUTPUT
+            public.append((row.sequence, row.kind, json.dumps(payload)))
+        return public, run.status
 
     async def stream():
         cursor = after
@@ -155,7 +176,7 @@ async def debug(run_id: str, request: Request):
     await query(owned_run, run_id, user.id)
     return await query(
         lambda: [
-            {"kind": t.kind, "metadata": json.loads(t.payload)}
+            {"kind": t.kind, "metadata": safe_data(json.loads(t.payload))}
             for t in Trace.select().where(Trace.run == run_id).limit(100)
         ]
     )

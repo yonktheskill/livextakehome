@@ -2,6 +2,7 @@
 
 import json
 
+from app.core.guardrails import safe_data
 from app.core.security import digest
 from app.db.models import Action, Confirmation, Connection, Message, Run, db
 from app.db.repository import checkpoint, emit
@@ -58,20 +59,22 @@ def prepare_action(run, conn, name, encoded, fingerprint, confirmation_required,
 
 def receipt(action):
     outcome = json.loads(action.result)
-    return {
-        "action_id": action.id,
-        "kind": action.kind,
-        "summary": "Cal.com returned an action result; inspect its status.",
-        "details": {
-            **outcome.get("validated", {}),
-            **{
-                k: v
-                for k, v in outcome.get("response", {}).items()
-                if k in {"title", "status", "start", "end", "duration_minutes"}
+    return safe_data(
+        {
+            "action_id": action.id,
+            "kind": action.kind,
+            "summary": "Cal.com returned an action result; inspect its status.",
+            "details": {
+                **outcome.get("validated", {}),
+                **{
+                    k: v
+                    for k, v in outcome.get("response", {}).items()
+                    if k in {"title", "status", "start", "end", "duration_minutes"}
+                },
+                "booking_uid": outcome.get("response", {}).get("uid"),
             },
-            "booking_uid": outcome.get("response", {}).get("uid"),
-        },
-    }
+        }
+    )
 
 
 def settle(action_id, state, result):
@@ -97,7 +100,7 @@ def settle(action_id, state, result):
                 client_request_id=f"action:{action.id}",
                 content=(
                     f"Action receipt ({action.kind}):\n\n```json\n"
-                    f"{json.dumps(fields, indent=2)}\n```"
+                    f"{json.dumps(safe_data(fields), indent=2)}\n```"
                 ),
                 status="final",
             )

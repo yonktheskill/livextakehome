@@ -25,7 +25,7 @@ The login command starts account authentication only; it does not make bookings 
 
 Provider choices in `.env.local`:
 
-- `LLM_PROVIDER=codex` uses your dedicated account login with explicit local opt-in. Model tools are disabled and returned application-tool proposals are validated by the backend. Codex replies arrive in complete validated chunks; OpenRouter provides token streaming. There is no automatic paid fallback.
+- `LLM_PROVIDER=codex` uses your dedicated account login with explicit local opt-in. Model tools are disabled and returned application-tool proposals are validated by the backend. Both providers' replies are buffered for local content checks before being saved or streamed to the browser. There is no automatic paid fallback.
 - `LLM_PROVIDER=fake` explicitly selects an offline UI/development demo. It returns labelled canned text, does not understand scheduling, and makes no bookings.
 - `LLM_PROVIDER=openrouter` requires a project `OPENROUTER_API_KEY` and explicit `LLM_MODEL`. Usage is billed by that provider; keys stay backend-only. Scheduling quality and live model availability have not been evaluated yet.
 
@@ -74,6 +74,14 @@ For public deployment, place HTTPS ingress in front, set `PUBLIC_ORIGIN` to its 
 The assistant manages **Bookings** through **Event Types** and **Slots**. Cal Events (tickets/RSVPs) and arbitrary Google/Outlook calendar entries are outside scope. A reusable event type is not an appointment. Cancellation retains booking history. Clear booking/reschedule instructions execute once resolved; cancellation and creating a missing type require the agreed confirmation flow.
 
 Actions and response chunks are persisted before being published. A transactional dispatch claim orders incoming corrections against writes. SQLite cannot atomically commit an external Cal.com request; uncertain outcomes need reconciliation before another potentially duplicate write. See the plan for the exact boundary and acceptance requirements.
+
+## Content guardrails
+
+The backend rejects chat messages containing listed English profanity/slurs, common obfuscations, recognizable credentials, or narrowly matched instruction-override attempts. Rejected submissions do not enter conversation history or interrupt an existing run. The local policy list is `backend/app/core/profanity.txt`; matching uses word boundaries, so names such as Dickinson and Scunthorpe remain valid. Exact names that coincide with a listed term are rejected under the strict policy.
+
+Each complete model response and all of its tool proposals are checked before that response is published or its tools run. Booking fields, names, event titles/descriptions, and cancellation reasons are checked before writes. Blocked responses produce a fixed safe notice. External tool data, profile values, confirmations, receipts, history and replay are filtered for display/context; original action evidence is retained privately, including truthful outcomes for writes completed before a later response was blocked. Profile values are provided as data outside the system message.
+
+These checks use no extra service, model calls or dependencies. They are a finite English policy list and pattern checks, not semantic harmful-content moderation or a guarantee against prompt injection, every language, or every obfuscation. Harmful-content restrictions also appear in the system prompt; existing ownership, schema and confirmation controls remain the execution boundary. Sensitive appointments such as therapy and sexual health are allowed.
 
 ## Implementation status
 

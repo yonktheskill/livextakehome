@@ -18,6 +18,8 @@ All backend paths retain `/api` through the Next.js same-origin proxy. JSON erro
 
 Frontend must render safe Markdown, action receipts, readable errors and reconnection states; reload canonical history and never resubmit a message to reconnect. Credentials are never persisted in browser storage. Confirmation can use plain text yes/no through the same message endpoint.
 
+Chat content rejected by local profanity/credential/instruction-override checks returns HTTP 422 with a safe `detail`, without creating a message/run or changing the conversation revision. A corrected submission can reuse that UUID. Model text is buffered and checked as a complete response before `message.delta` is persisted/published; clients must support a full reply in a single delta. An unchecked partial response is discarded on provider failure or interruption. A blocked response emits a fixed safe notice and `run.failed`. Earlier successful action receipts remain valid. History and replay filter legacy content at read time, including prohibited terms split across old delta events, without rewriting private action evidence.
+
 ## Provider Python interface (owned by provider agent)
 
 `backend/app/providers/base.py` defines immutable dataclass `ProviderEvent`:

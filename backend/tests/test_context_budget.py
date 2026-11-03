@@ -49,7 +49,7 @@ def test_summary_fresh_bounded_provenance_and_retrieval_dedup(account):
     for i in range(40):
         submit(user, f"candidate {i}: Alice prefers Friday. " * 12)
     run_id = submit(user, "Find candidate preferences")
-    settings = Settings(context_input_tokens=4000, context_summary_tokens=700)
+    settings = Settings(context_input_tokens=5000, context_summary_tokens=700)
     messages = assemble(run_id, settings)
     snapshots = list(Snapshot.select())
     assert len(snapshots) == 1
@@ -136,7 +136,7 @@ def test_final_cap_counts_schema_reserve_and_keeps_complete_tool_json(account):
     assert estimate(result, settings) <= input_budget(settings, tools)
     assert result[-2]["tool_calls"][0]["id"] == result[-1]["tool_call_id"] == "exact_call"
     assert "omitted" in json.loads(result[-1]["content"])
-    assert result[2] == base[-1]  # Current intent retained in full.
+    assert result[-3] == base[-1]  # Current intent retained in full.
 
 
 def test_retry_keeps_original_user_request_and_attendee_through_tool_pressure(account):

@@ -99,7 +99,7 @@ The official [Codex SDK docs](https://learn.chatgpt.com/docs/codex-sdk) currentl
 
 Before relying on this development adapter, prove schema adherence, SDK event handling, timeouts/cancellation, repeatable context injection, and denial of unrelated shell/filesystem tools. Pass a scrubbed subprocess environment; never give Codex the Cal.com key, database/master key, or project `.env`. Verify actual isolation rather than relying on prompt instructions. The [app-server interface](https://learn.chatgpt.com/docs/app-server) exposes richer tool/event integration, including experimental dynamic tools; do not make production architecture depend on that experimental path.
 
-OpenRouter must support token-level response streaming. Codex may initially provide coarser message events; its exact streaming/tool parity is an explicit feasibility check. If the desired isolation or contract cannot be achieved, report that limitation and discuss the alternative; do not silently incur paid API usage or add a Node backend bridge.
+OpenRouter supports token-level response streaming internally. The approved MVP guardrail policy buffers each complete model response before publishing it to the browser; progressive text release through a rolling buffer is deferred to section 12. Codex may provide coarser message events; its exact streaming/tool parity is an explicit feasibility check. If the desired isolation or contract cannot be achieved, report that limitation and discuss the alternative; do not silently incur paid API usage or add a Node backend bridge.
 
 ## 5. Cal.com tools and endpoint review
 
@@ -155,9 +155,9 @@ Recommended HTTP contract:
 - `POST /api/runs/{id}/stop`: atomically compete with the dispatch claim; return whether stopping prevented dispatch or a committed action still needs resolution.
 - Auth and Cal.com connection routes: registration/login/logout, account profile, masked connection status, connect/replace/disconnect.
 
-Stream path: **provider → backend normalization → SQLite commit → SSE → browser**. This implements “stream straight to frontend” with the backend as the authenticated persistence boundary. No extra model rewrites the response.
+Current MVP policy: collect each complete model response and inspect its text and all proposed tool calls before publishing that response or executing its tools. Approved replies are committed before SSE publication. This delays the first visible reply text; safe progress updates and action receipts still use SSE. No extra model rewrites the response.
 
-Buffer tiny text deltas briefly (recommended starting point: up to 50 ms or 1 KB), assign increasing per-run sequence IDs, commit the batch, and then emit. Persist tool dispatch/result and action boundaries immediately. If persistence fails, stop publishing and stop new side effects. Avoid one SQLite transaction for every token. Heartbeats need no durable record. See [OpenRouter streaming](https://openrouter.ai/docs/api_reference/streaming).
+The earlier 50 ms/1 KB delta-batching recommendation is superseded by complete-response checks; rolling-buffer text release is future work. Continue assigning increasing per-run sequence IDs and persisting action boundaries immediately. If persistence fails, stop publishing and stop new side effects. Heartbeats need no durable record. See [OpenRouter streaming](https://openrouter.ai/docs/api_reference/streaming).
 
 Persist public events such as `message.delta`, `tool.status`, `action.result`, `run.waiting`, `run.completed`, and `run.failed`. Public tool status exposes safe progress text, not raw tool arguments/results. The UI deduplicates events by run/sequence. Finalize the assistant message from committed chunks; mark interrupted partial text clearly. A backend-generated action receipt is the authority for booking UID, time, attendees, and state, and remains visible even if the final LLM explanation fails.
 
@@ -281,6 +281,7 @@ Recommended: typed confirmation controls inside the conversation, with a plain-t
 - **15-minute preparation gaps:** use deterministic slot filtering and, if separately authorized later, Cal.com event-type buffers. Prompt text alone cannot enforce gaps. App-only filtering affects bookings made here; enforcing the rule on public Cal.com links requires changing Cal.com configuration. Define before/after/between semantics first.
 - **Real-time voice:** add a separate audio transport/provider adapter, interruption handling, and speech services, reusing the Python action executor. Start with speech-to-text → existing agent → text-to-speech. A full-duplex experience needs additional design and must not be assumed available through every OpenRouter model.
 - **External changes:** re-read relevant Cal.com resources in MVP. Add signed, deduplicated webhooks later if we need proactive updates; local history is not a full booking mirror.
+- **Rolling-buffer reply streaming:** deferred by agreement; retain complete-response guardrail checks in the MVP. Explore a bounded trailing buffer with overlapping checks before releasing text progressively to improve time to first visible text. Define holdback length and release boundaries, and test profanity/credentials split across provider chunks, obfuscations, interruptions, persistence and SSE replay. Released text cannot be recalled, and a rolling window cannot reliably judge context-dependent harmful content across a whole reply; document that tradeoff before enabling it. Keep complete tool arguments and authorization checks mandatory before dispatch, regardless of text-release strategy.
 
 ## 13. Repository, tooling, tests, and commits
 

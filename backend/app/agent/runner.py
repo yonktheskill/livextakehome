@@ -5,6 +5,14 @@ import time
 
 from app.agent.context import assemble, authorized, covered_sources, estimate, fit_prompt, retrieve
 from app.agent.tracing import record_tool
+from app.core.guardrails import (
+    POLICY_VERSION,
+    SAFE_OUTPUT,
+    ContentRejected,
+    require_content,
+    safe_data,
+    safe_text,
+)
 from app.db.database import query
 from app.db.models import Message, Run, Trace, db
 from app.db.repository import checkpoint, claim_run, cleanup, emit, finish, mark_uncertain, recover
@@ -47,10 +55,22 @@ class Runner:
     async def execute(self, run_id):
         try:
             async with asyncio.timeout(self.settings.run_timeout_seconds):
+                # Recheck queued messages accepted before the policy was installed.
+                await query(lambda: require_content(Run.get_by_id(run_id).message.content))
                 await self.loop(run_id)
+        except ContentRejected as exc:
+            await query(self.append, run_id, SAFE_OUTPUT, new_response=True)
+            await query(
+                Trace.create,
+                run=run_id,
+                kind="guardrail",
+                payload=json.dumps({"reason": exc.reason, "policy_version": POLICY_VERSION}),
+            )
+            await query(finish, run_id, "failed", "run.failed", {"message": SAFE_OUTPUT})
         except Waiting as exc:
-            await query(self.append, run_id, str(exc), new_response=True)
-            await query(finish, run_id, "waiting_for_user", "run.waiting", {"message": str(exc)})
+            text = safe_text(str(exc))
+            await query(self.append, run_id, text, new_response=True)
+            await query(finish, run_id, "waiting_for_user", "run.waiting", {"message": text})
         except Interrupted:
             await query(finish, run_id, "interrupted", "run.interrupted", {})
         except (UnknownOutcome, TimeoutError, asyncio.CancelledError) as exc:
@@ -96,6 +116,7 @@ class Runner:
             # independent model responses (and confirmation prompts), not tokens.
             if new_response and msg.content:
                 text = "\n\n" + text
+            require_content(msg.content + text)
             msg.content += text
             msg.save()
             emit(run_id, "message.delta", {"message_id": msg.id, "text": text})
@@ -168,14 +189,12 @@ class Runner:
                 if not await query(checkpoint, run_id):
                     raise Interrupted()
                 if event.kind == "text_delta":
-                    first_delta = not text
                     text += event.text
                     if (
                         len(text) > 24000
                         or estimate(text, self.settings) > self.settings.context_output_tokens
                     ):
                         raise RuntimeError("Output budget exceeded")
-                    await query(self.append, run_id, event.text, new_response=first_delta)
                 elif event.kind == "usage":
                     usage = {
                         k: v
@@ -206,7 +225,7 @@ class Runner:
                         "step": step,
                         "provider": self.settings.llm_provider,
                         "model": self.settings.llm_model,
-                        "prompt_version": 3,
+                        "prompt_version": 4,
                         "estimated_input_tokens": estimate(messages, self.settings),
                         "usage": usage,
                         "elapsed_ms": int((time.monotonic() - started) * 1000),
@@ -215,6 +234,21 @@ class Runner:
                     }
                 ),
             )
+            if not await query(checkpoint, run_id):
+                raise Interrupted()
+            secrets = (
+                self.settings.master_secret,
+                *self.settings.master_secret_previous,
+                self.settings.openrouter_api_key,
+            )
+            # Hold the entire response, including proposed calls, until validated.
+            # A prohibited word/credential can span arbitrary provider chunks.
+            require_content(text, secrets=secrets)
+            for call in calls:
+                if call.name not in {t["function"]["name"] for t in tools}:
+                    raise RuntimeError("Unknown tool proposal")
+                require_content(call.arguments, secrets=secrets)
+            await query(self.append, run_id, text, new_response=True)
             if not calls:
                 await query(finish, run_id, "succeeded", "run.completed", {})
                 return
@@ -235,7 +269,7 @@ class Runner:
             for call in calls:
                 if not await query(checkpoint, run_id):
                     raise Interrupted()
-                await query(emit, run_id, "tool.status", {"text": f"Checking {call.name}"})
+                await query(emit, run_id, "tool.status", {"text": "Checking scheduling details."})
                 result = await self.tool(
                     run_id,
                     call.name,
@@ -284,7 +318,14 @@ class Runner:
                     )
             else:
                 result = await self.executor.execute(run_id, name, arguments)
-            return result
+            return safe_data(
+                result,
+                secrets=(
+                    self.settings.master_secret,
+                    *self.settings.master_secret_previous,
+                    self.settings.openrouter_api_key,
+                ),
+            )
         except BaseException as exc:
             # Exception text may contain upstream credentials or private prompts.
             error = (

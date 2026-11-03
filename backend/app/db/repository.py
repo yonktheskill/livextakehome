@@ -1,6 +1,7 @@
 import json
 import time
 
+from app.core.guardrails import require_content, safe_data
 from app.db.models import (
     Action,
     Confirmation,
@@ -17,6 +18,7 @@ TERMINAL = {"waiting_for_user", "succeeded", "failed", "interrupted", "needs_rec
 
 
 def emit(run, kind, payload):
+    payload = safe_data(payload)
     with db.atomic("IMMEDIATE"):
         last = Event.select().where(Event.run == run).order_by(Event.sequence.desc()).first()
         Event.create(
@@ -37,6 +39,7 @@ def finish(run_id, status, kind, payload):
 
 
 def accept(user, content, request_id):
+    require_content(content)
     with db.atomic("IMMEDIATE"):
         conv = Conversation.get(Conversation.user == user)
         existing = Message.get_or_none(

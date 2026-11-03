@@ -38,6 +38,17 @@ Use explicit fake inference for offline UI checks, or configure OpenRouter model
 
 ## Behaviour and safety
 
+- Dependency-free content checks live in `app/core/guardrails.py`, with the strict
+  English policy list in `app/core/profanity.txt`. Input rejection happens before
+  persistence/revision changes. Whole model responses and all tool proposals are
+  checked before publication/dispatch; unchecked partial responses are discarded.
+  Outgoing booking/profile fields are checked at the executor, and external text,
+  confirmations, receipts, canonical history and replay receive filtered views.
+  Profile data is outside the system message. Guardrail traces retain only reason
+  codes and policy version. Existing raw action evidence and completed writes are
+  preserved. These deterministic checks are not semantic moderation or a complete
+  defense against prompt injection; no classifier, extra service or model call is used.
+
 - Argon2id salted password hashes; opaque random sessions are stored only as SHA-256
   hashes. Cookies are HttpOnly and SameSite=Lax. Login rotates the browser session;
   logout revokes it. Origin and Fetch Metadata checks cover mutations. Auth and

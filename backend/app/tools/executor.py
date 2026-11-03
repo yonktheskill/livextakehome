@@ -5,6 +5,7 @@ from datetime import datetime
 from pydantic import ValidationError
 
 from app.calcom.client import VERSIONS, CalClient, CalError
+from app.core.guardrails import WITHHELD, ContentRejected, require_content
 from app.core.security import digest
 from app.db.database import query
 from app.db.dispatch import StalePreparation, prepare_action, settle
@@ -40,6 +41,11 @@ class Executor:
             return {
                 "error": "Invalid arguments; use the exact schema and complete required fields."
             }
+        # Include nested booking fields and names; reject rather than rewrite
+        # user identities or text that would be sent to Cal.com.
+        require_content(args.model_dump(mode="json"))
+        if WITHHELD in json.dumps(args.model_dump(mode="json")):
+            raise ContentRejected("withheld_details")
         if isinstance(args, SavePreferredName):
             return await query(self.save_preferred_name, run_id, args.preferred_name)
         run, conn = await query(self.connection, run_id)
@@ -67,6 +73,8 @@ class Executor:
             if cached:
                 return json.loads(cached.result)
             path, payload, details = await prepare(client, name, args, conn.owner)
+            require_content(payload)
+            require_content(details)
             fingerprint = digest(json.dumps(details, sort_keys=True))
             explicit = (
                 await query(self.explicit_creation, run_id, args)
