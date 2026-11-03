@@ -2,7 +2,7 @@ SHELL := /bin/sh
 -include .env.local
 export
 
-.PHONY: help setup init-dev dev dev-backend dev-frontend up down logs migrate cleanup-traces format lint typecheck test test-backend test-frontend build check
+.PHONY: help setup init-dev dev dev-backend dev-frontend up down logs migrate cleanup-traces format lint typecheck test test-backend test-frontend build check smoke-containers
 help:
 	@echo "setup / init-dev   Install dependencies / create private local configuration"
 	@echo "dev               Start frontend and backend (Ctrl-C stops both)"
@@ -50,3 +50,6 @@ test-frontend:
 build:
 	pnpm --dir frontend build
 check: lint typecheck test
+
+smoke-containers:
+	python3 scripts/smoke_containers.py

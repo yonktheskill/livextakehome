@@ -9,7 +9,9 @@ destination = Path(__file__).resolve().parents[1] / ".env.local"
 if destination.exists():
     raise SystemExit(".env.local already exists; left unchanged.")
 key = base64.urlsafe_b64encode(secrets.token_bytes(32)).decode("ascii")
-with os.fdopen(os.open(destination, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600), "w") as file:
+with os.fdopen(
+    os.open(destination, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600), "w"
+) as file:
     file.write(
         f"MASTER_SECRET={key}\n"
         "DATABASE_PATH=data/app.sqlite3\n"

@@ -34,6 +34,7 @@ make check           # backend/frontend lint, types, offline tests
 make build           # Next.js production build
 make migrate         # initialize/upgrade the local schema
 make cleanup-traces  # remove expired detailed debug records
+make smoke-containers # verify built images over real HTTP, offline
 ```
 
 Automated tests use temporary databases, fake providers, and mocked Cal.com HTTP. They do not send meetings, use the personal `.env`, or incur model charges. Provider-only SDK inspection may skip when its optional package is absent. Optional Git hooks: `uvx pre-commit install` (configuration is committed). See [frontend notes](frontend/README.md) for stream recovery behaviour and limitations.
@@ -58,4 +59,4 @@ Actions and response chunks are persisted before being published. A transactiona
 
 ## Implementation status
 
-Frontend and provider milestones are implemented. Backend implementation and integration verification are in progress. The frontend production Docker image builds successfully; full two-container runtime integration is still pending. Live Cal.com writes, real model execution, and browser visual verification are not yet certified. Contacts, screenshot input, persistent preferences, and voice remain future work.
+Frontend, backend, and provider milestones are implemented. Final hardening and review are in progress. Both Docker images build. Real HTTP two-container tests passed cookies/auth, proxying, dedupe, SSE/history, CSRF, restart persistence, and logout using explicit fake inference. Live Cal.com writes, real model execution, and browser visual verification are not yet certified. Contacts, screenshot input, persistent preferences, and voice remain future work.
