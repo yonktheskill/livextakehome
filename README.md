@@ -36,7 +36,7 @@ make migrate         # initialize/upgrade the local schema
 make cleanup-traces  # remove expired detailed debug records
 ```
 
-Automated tests use temporary databases, fake providers, and mocked Cal.com HTTP. They do not send meetings, use the personal `.env`, or incur model charges. Provider-only SDK inspection may skip when its optional package is absent. See [frontend notes](frontend/README.md) for stream recovery behaviour and limitations.
+Automated tests use temporary databases, fake providers, and mocked Cal.com HTTP. They do not send meetings, use the personal `.env`, or incur model charges. Provider-only SDK inspection may skip when its optional package is absent. Optional Git hooks: `uvx pre-commit install` (configuration is committed). See [frontend notes](frontend/README.md) for stream recovery behaviour and limitations.
 
 ## Containers
 
@@ -58,4 +58,4 @@ Actions and response chunks are persisted before being published. A transactiona
 
 ## Implementation status
 
-Frontend and provider milestones are implemented. Backend implementation and integration verification are in progress. Live Cal.com writes, real model execution, container runtime checks, and browser visual verification are not yet certified. Contacts, screenshot input, persistent preferences, and voice remain future work.
+Frontend and provider milestones are implemented. Backend implementation and integration verification are in progress. The frontend production Docker image builds successfully; full two-container runtime integration is still pending. Live Cal.com writes, real model execution, and browser visual verification are not yet certified. Contacts, screenshot input, persistent preferences, and voice remain future work.
