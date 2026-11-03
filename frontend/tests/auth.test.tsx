@@ -53,9 +53,24 @@ describe("cookie auth", () => {
     await waitFor(() => expect(screen.getByRole("button", { name: "Create account" })).toBeEnabled());
     fireEvent.change(screen.getByLabelText("Email address"), { target: { value: "new@example.test" } });
     fireEvent.change(screen.getByLabelText("Password"), { target: { value: "example-passphrase" } });
-    fireEvent.submit(screen.getByRole("button", { name: "Create account" }).closest("form")!);
+    const form = screen.getByRole("button", { name: "Create account" }).closest("form")!;
+    fireEvent.change(screen.getByLabelText("Confirm password"), {
+      target: { value: "different-passphrase" },
+    });
+    fireEvent.submit(form);
+    expect(screen.getByRole("alert")).toHaveTextContent("Passwords do not match.");
+    expect(fetcher).toHaveBeenCalledTimes(1);
+    expect(replace).not.toHaveBeenCalled();
+    fireEvent.change(screen.getByLabelText("Confirm password"), {
+      target: { value: "example-passphrase" },
+    });
+    fireEvent.submit(form);
     await waitFor(() => expect(replace).toHaveBeenCalledWith("/"));
     expect(fetcher.mock.calls[1][0]).toBe("/api/auth/register");
+    expect(JSON.parse(fetcher.mock.calls[1][1].body)).toEqual({
+      email: "new@example.test",
+      password: "example-passphrase",
+    });
     expect(storage).not.toHaveBeenCalled();
   });
   it("surfaces a failed session check rather than treating it as an expired session", async () => {

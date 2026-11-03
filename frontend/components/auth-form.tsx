@@ -15,9 +15,13 @@ export function AuthForm({ mode }: { mode: "login" | "register" }) {
   }, [user, router]);
   async function submit(event: React.FormEvent<HTMLFormElement>) {
     event.preventDefault();
-    setBusy(true);
     setError("");
     const form = new FormData(event.currentTarget);
+    if (mode === "register" && form.get("password") !== form.get("confirmPassword")) {
+      setError("Passwords do not match.");
+      return;
+    }
+    setBusy(true);
     try {
       await authenticate(mode, String(form.get("email")).trim(), String(form.get("password")));
       router.replace("/");
@@ -86,6 +90,20 @@ export function AuthForm({ mode }: { mode: "login" | "register" }) {
               />
               {register && <p className="field-hint">Use at least 12 characters.</p>}
             </Field>
+            {register && (
+              <Field>
+                <Label>Confirm password</Label>
+                <Input
+                  className="input"
+                  name="confirmPassword"
+                  type="password"
+                  autoComplete="new-password"
+                  required
+                  minLength={12}
+                  maxLength={1024}
+                />
+              </Field>
+            )}
             {error && (
               <p role="alert" className="error-box">
                 {error}
