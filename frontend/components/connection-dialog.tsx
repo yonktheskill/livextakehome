@@ -1,16 +1,8 @@
 "use client";
 import { useState } from "react";
-import {
-  Button,
-  Dialog,
-  DialogPanel,
-  DialogTitle,
-  Description,
-  Field,
-  Input,
-  Label,
-} from "@headlessui/react";
+import { Button, Dialog, DialogPanel, DialogTitle, Description, Field, Label } from "@headlessui/react";
 import { KeyRound, X } from "lucide-react";
+import { SecretInput } from "./secret-input";
 import { api, ApiError, type Connection } from "../lib/api";
 export function ConnectionDialog({
   open,
@@ -95,9 +87,8 @@ export function ConnectionDialog({
           >
             <Field>
               <Label>{connection?.connected ? "Replace API key" : "Cal.com API key"}</Label>
-              <Input
-                className="input"
-                type="password"
+              <SecretInput
+                visibilityLabel="Cal.com API key"
                 value={key}
                 onChange={(e) => setKey(e.target.value)}
                 autoComplete="off"

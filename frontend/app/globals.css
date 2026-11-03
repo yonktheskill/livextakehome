@@ -107,6 +107,20 @@ button:hover:not(:disabled) {
   margin-top: 7px;
   color: var(--ink);
 }
+.secret-input {
+  position: relative;
+  margin-top: 7px;
+}
+.secret-input .input {
+  margin-top: 0;
+  padding-right: 48px;
+}
+.secret-input-toggle {
+  position: absolute;
+  top: 50%;
+  right: 4px;
+  transform: translateY(-50%);
+}
 label {
   font-size: 12px;
   font-weight: 600;

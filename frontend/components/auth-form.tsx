@@ -5,6 +5,7 @@ import { useEffect, useState } from "react";
 import { Button, Field, Input, Label } from "@headlessui/react";
 import { ArrowRight, CalendarDays } from "lucide-react";
 import { useAuth } from "./auth";
+import { SecretInput } from "./secret-input";
 export function AuthForm({ mode }: { mode: "login" | "register" }) {
   const { user, loading, authenticate } = useAuth();
   const router = useRouter();
@@ -79,10 +80,9 @@ export function AuthForm({ mode }: { mode: "login" | "register" }) {
             </Field>
             <Field>
               <Label>Password</Label>
-              <Input
-                className="input"
+              <SecretInput
+                visibilityLabel="password"
                 name="password"
-                type="password"
                 autoComplete={register ? "new-password" : "current-password"}
                 required
                 minLength={register ? 12 : 1}
@@ -93,10 +93,9 @@ export function AuthForm({ mode }: { mode: "login" | "register" }) {
             {register && (
               <Field>
                 <Label>Confirm password</Label>
-                <Input
-                  className="input"
+                <SecretInput
+                  visibilityLabel="confirm password"
                   name="confirmPassword"
-                  type="password"
                   autoComplete="new-password"
                   required
                   minLength={12}

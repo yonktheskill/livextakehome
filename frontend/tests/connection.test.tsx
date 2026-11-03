@@ -17,6 +17,12 @@ describe("Cal.com connection controls", () => {
     const input = screen.getByLabelText("Cal.com API key");
     expect(input).toHaveAttribute("type", "password");
     fireEvent.change(input, { target: { value: "mock-offline-key" } });
+    fireEvent.click(screen.getByRole("button", { name: "Show Cal.com API key" }));
+    expect(input).toHaveAttribute("type", "text");
+    expect(input).toHaveValue("mock-offline-key");
+    expect(fetcher).not.toHaveBeenCalled();
+    fireEvent.click(screen.getByRole("button", { name: "Hide Cal.com API key" }));
+    expect(input).toHaveAttribute("type", "password");
     fireEvent.submit(input.closest("form")!);
     await waitFor(() => expect(changed).toHaveBeenCalledWith({ connected: true, label: "••••1234" }));
     expect(fetcher.mock.calls[0][0]).toBe("/api/connection");
