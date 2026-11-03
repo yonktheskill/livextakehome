@@ -137,8 +137,12 @@ def main():
             )
         finally:
             for name in (frontend, backend):
-                subprocess.run(["docker", "rm", "-f", name], capture_output=True)
-            subprocess.run(["docker", "network", "rm", network], capture_output=True)
+                subprocess.run(
+                    ["docker", "rm", "-f", name], capture_output=True, check=False
+                )
+            subprocess.run(
+                ["docker", "network", "rm", network], capture_output=True, check=False
+            )
 
 
 if __name__ == "__main__":
