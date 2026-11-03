@@ -15,7 +15,8 @@ setup:
 init-dev:
 	python3 scripts/init_dev.py
 dev:
-	@trap 'kill 0' INT TERM EXIT; $(MAKE) dev-backend & $(MAKE) dev-frontend & wait
+	@$(MAKE) dev-backend & backend_pid=$$!; $(MAKE) dev-frontend & frontend_pid=$$!; \
+	trap 'kill $$backend_pid $$frontend_pid 2>/dev/null || true' INT TERM EXIT; wait
 dev-backend:
 	cd backend && uv run uvicorn app.main:app --reload --host 127.0.0.1 --port 8000 --no-access-log
 dev-frontend:
