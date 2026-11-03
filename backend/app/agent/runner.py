@@ -49,7 +49,7 @@ class Runner:
             async with asyncio.timeout(self.settings.run_timeout_seconds):
                 await self.loop(run_id)
         except Waiting as exc:
-            await query(self.append, run_id, str(exc))
+            await query(self.append, run_id, str(exc), new_response=True)
             await query(finish, run_id, "waiting_for_user", "run.waiting", {"message": str(exc)})
         except Interrupted:
             await query(finish, run_id, "interrupted", "run.interrupted", {})
@@ -82,7 +82,9 @@ class Runner:
             log.error("Agent run failed", extra={"run_id": run_id})
 
     @staticmethod
-    def append(run_id, text):
+    def append(run_id, text, *, new_response=False):
+        if not text:
+            return
         with db.atomic("IMMEDIATE"):
             run = Run.get_by_id(run_id)
             msg, _ = Message.get_or_create(
@@ -90,6 +92,10 @@ class Runner:
                 client_request_id=f"assistant:{run_id}",
                 defaults={"role": "assistant", "status": "partial"},
             )
+            # Tokens within one response must stay byte-for-byte intact. Separate
+            # independent model responses (and confirmation prompts), not tokens.
+            if new_response and msg.content:
+                text = "\n\n" + text
             msg.content += text
             msg.save()
             emit(run_id, "message.delta", {"message_id": msg.id, "text": text})
@@ -103,10 +109,17 @@ class Runner:
                 "type": "function",
                 "function": {
                     "name": "search_history",
-                    "description": "Retrieve source messages for corrections and missing context.",
+                    "description": "Retrieve original user messages for missing context. "
+                    "Use short keywords or an empty query for recent messages. "
+                    "Fetch an excerpt's full original using source_id; "
+                    "set role=assistant only to find past assistant replies.",
                     "parameters": {
                         "type": "object",
-                        "properties": {"query": {"type": "string"}},
+                        "properties": {
+                            "query": {"type": "string"},
+                            "role": {"type": "string", "enum": ["user", "assistant"]},
+                            "source_id": {"type": "string"},
+                        },
                         "required": ["query"],
                         "additionalProperties": False,
                     },
@@ -155,13 +168,14 @@ class Runner:
                 if not await query(checkpoint, run_id):
                     raise Interrupted()
                 if event.kind == "text_delta":
+                    first_delta = not text
                     text += event.text
                     if (
                         len(text) > 24000
                         or estimate(text, self.settings) > self.settings.context_output_tokens
                     ):
                         raise RuntimeError("Output budget exceeded")
-                    await query(self.append, run_id, event.text)
+                    await query(self.append, run_id, event.text, new_response=first_delta)
                 elif event.kind == "usage":
                     usage = {
                         k: v
@@ -192,7 +206,8 @@ class Runner:
                         "step": step,
                         "provider": self.settings.llm_provider,
                         "model": self.settings.llm_model,
-                        "prompt_version": 2,
+                        "prompt_version": 3,
+                        "estimated_input_tokens": estimate(messages, self.settings),
                         "usage": usage,
                         "elapsed_ms": int((time.monotonic() - started) * 1000),
                         "output_chars": len(text),
@@ -245,13 +260,27 @@ class Runner:
             if name == "search_history":
                 if (
                     not isinstance(arguments, dict)
-                    or set(arguments) != {"query"}
-                    or not isinstance(arguments["query"], str)
+                    or not {"query"} <= set(arguments) <= {"query", "role", "source_id"}
+                    or not isinstance(arguments.get("query"), str)
+                    or arguments.get("role", "user") not in ("user", "assistant")
+                    or (
+                        "source_id" in arguments
+                        and (
+                            not isinstance(arguments["source_id"], str)
+                            or not arguments["source_id"]
+                        )
+                    )
                 ):
                     result = {"error": "Invalid history query arguments"}
                 else:
                     result = await query(
-                        retrieve, run_id, arguments["query"], excluded, self.settings
+                        retrieve,
+                        run_id,
+                        arguments["query"],
+                        excluded,
+                        self.settings,
+                        role=arguments.get("role", "user"),
+                        source_id=arguments.get("source_id"),
                     )
             else:
                 result = await self.executor.execute(run_id, name, arguments)

@@ -182,3 +182,26 @@ async def test_cursor_pagination_and_cross_midnight_overlap(account):
     assert len(result["bookings"]) == 1 and not result["truncated"]
     assert seen[1]["cursor"] == "page-two" and seen[0]["limit"] == "100"
     assert "afterStart" not in seen[0] and "beforeEnd" not in seen[0]
+
+
+@pytest.mark.asyncio
+async def test_event_type_list_keeps_scheduling_fields_without_unrelated_metadata(account):
+    user, vault = account
+    event_type = {
+        **TYPE,
+        "title": "Consultation",
+        "bookingFields": [{"slug": "purpose", "required": True}],
+        "minimumBookingNotice": 60,
+        "confirmationPolicy": {"type": "always"},
+        "users": [{"email": "owner@example.com", "avatar": "x" * 10000}],
+        "metadata": {"unrelated": "x" * 10000},
+    }
+
+    def handler(request):
+        assert request.url.path == "/v2/event-types"
+        return httpx.Response(200, json={"status": "success", "data": [event_type]})
+
+    executor = Executor(vault, lambda key: CalClient(key, httpx.MockTransport(handler)))
+    run_id = accept(user, "book a meeting", str(uuid4()))["run_id"]
+    result = await executor.execute(run_id, "list_event_types", {})
+    assert result == [{k: v for k, v in event_type.items() if k not in {"users", "metadata"}}]

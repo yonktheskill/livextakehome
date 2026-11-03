@@ -27,6 +27,7 @@ class Settings(BaseSettings):
     context_tool_reserve_tokens: int = Field(default=1024, ge=0)
     context_bytes_per_token: float = Field(default=2.0, gt=0, le=4)
     context_compaction_threshold: float = Field(default=0.7, gt=0, le=1)
+    context_intent_tokens: int = Field(default=1600, ge=0)
     context_summary_tokens: int = Field(default=1200, ge=0)
     context_retrieval_tokens: int = Field(default=1600, ge=0)
     trace_max_bytes: int = Field(default=16000, ge=1024, le=100000)

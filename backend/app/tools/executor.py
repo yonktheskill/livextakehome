@@ -200,6 +200,34 @@ class Executor:
                 "GET", "/v2/event-types", params={"username": conn.username}
             )
             # Read endpoint is owner-filtered, individual mutations additionally verify ownership.
+            # Do not crowd the original request out of context with unrelated API
+            # metadata. Full details are still re-read/validated before any write.
+            fields = {
+                "id",
+                "ownerId",
+                "title",
+                "slug",
+                "description",
+                "length",
+                "lengthInMinutes",
+                "lengthInMinutesOptions",
+                "locations",
+                "bookingFields",
+                "recurrence",
+                "seats",
+                "hidden",
+                "scheduleId",
+                "minimumBookingNotice",
+                "beforeEventBuffer",
+                "afterEventBuffer",
+                "bookingWindow",
+                "confirmationPolicy",
+                "disableGuests",
+                "bookingRequiresAuthentication",
+                "bookerActiveBookingsLimit",
+            }
+            if isinstance(result, list):
+                return [{k: v for k, v in row.items() if k in fields} for row in result]
             return result
         if name == "get_available_slots":
             event_type = await get_type(client, args.event_type_id, conn.owner)

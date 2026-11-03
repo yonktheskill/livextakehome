@@ -72,9 +72,19 @@ Use explicit fake inference for offline UI checks, or configure OpenRouter model
   proposals ask exact permission, including implicit missing types. A combined
   create-and-book request currently needs the type confirmation before continuing.
 - Inference uses bounded recent messages, extractive snapshots with original time/zone,
-  canonical recent action evidence, and owner-scoped lexical history retrieval. It
+  canonical recent action evidence, and owner-scoped lexical history retrieval. Recent
+  original user requests and clarifications have a protected reserve (up to 20 messages,
+  bounded by `CONTEXT_INTENT_TOKENS`, default 1600, and one third of usable input). Tool
+  results cannot evict that reserve and leave only a follow-up such as “retry”. It
   uses configurable estimated token budgets and a 70% compaction threshold, not
   just message counts; it does not run a paid summarization call. Canonical history is not truncated/deleted.
+- History search defaults to user messages, ranks meaningful keywords, and falls back
+  to recent requests when none match. Assistant replies require an explicit role filter.
+  Excerpts are marked as truncated and remain retrievable; `source_id` fetches the
+  original within the retrieval budget. Searches exclude later messages and the
+  current run's own narration. Event-type lists omit unrelated API metadata; full
+  records are re-read before writes. Independent model responses have paragraph
+  separators in both canonical text and replay events; token fragments are unchanged.
 
 ## Limits requiring further work
 
