@@ -9,7 +9,7 @@ Build a chat assistant for a busy person managing their own Cal.com account. The
 | Area | Agreed direction |
 | --- | --- |
 | Backend | Python + FastAPI; backend owns tools, agent execution, auth, and storage. |
-| Frontend | Next.js + TypeScript; Markdown rendering, including tables. |
+| Frontend | Next.js + TypeScript + Tailwind CSS, using Tailwind Labs' free Headless UI components; Markdown rendering, including tables. |
 | Deployment | Two application containers: frontend and backend. SQLite lives on a persistent backend volume. PostgreSQL later. |
 | Account model | Each app user manages their own Cal.com account as host. One ongoing conversation per app user. |
 | Credentials | At most one active Cal.com API key per user. A separate project OpenRouter API key stays server-side. |
@@ -17,7 +17,11 @@ Build a chat assistant for a busy person managing their own Cal.com account. The
 | Booking/rescheduling | Execute a clear request once required details and target are resolved. Clarify ambiguity. |
 | Cancellation | Ask for confirmation of the exact booking before cancelling. “Delete booking” means cancel. |
 | Event types | Support creating reusable event types. Ask before creating a missing type as part of a booking. |
+| Event-type creation UX | A clear explicit creation request is sufficient authorization. For an implicitly needed type, ask; a combined confirmation can authorize creating the type and making the specified booking. |
 | Duration | Use live Cal.com configuration. Round unsupported requested lengths up to a supported length and disclose the adjustment. |
+| New messages during execution | Interrupt at the next safe checkpoint and replan with the new message. Atomically order correction acceptance against committing an action for dispatch; see section 6. |
+| Account lifecycle | Polished login and registration pages, plus logout. No account deletion or profile-editing flow in MVP; email verification/password reset are deferred. Cal.com key management remains in scope. |
+| Retention | Keep canonical chat/action history for the MVP; purge detailed debug payloads after 30 days. There is no account-deletion UI in this scope. |
 | Engineering | ORM, migrations, linters, formatting, unit tests, readable modules, Makefile, incremental commits. |
 
 Future scope: saved contacts extracted from conversations, screenshots, real-time voice, and persistent user preferences. Reserve clean extension points now; implement these separately.
@@ -54,9 +58,15 @@ For “wait, make it Friday,” retrieve the last relevant confirmed action and 
 
 Cancellation confirmation binds to the exact UID and current booking details, not a generic “yes.” Recommended: expire pending confirmation after 10 minutes and invalidate it when the request or target changes. Re-read before mutation. Do not cancel a recurring series or a group of meetings under a single-booking confirmation.
 
+### What “event-type defaults” means
+
+A request such as “create a 45-minute consultation type” supplies the title and duration, but the reusable template also has scheduling settings. Examples: which availability schedule applies (weekday office hours or weekend hours), the meeting location (video, phone, or in person), preparation buffers, and minimum booking notice. These are settings for future bookings using this type, not the date or attendee of one appointment. See [event-type configuration](https://cal.com/docs/api-reference/v2/event-types/get-an-event-type).
+
+Recommended policy, still open for discussion: use the connected account's default availability schedule and supported default meeting location when each is unambiguous. Ask when either is missing or competing choices exist. These are application selection rules; do not assume Cal.com automatically inherits all account settings. Generate a readable unique slug from the title and handle conflicts explicitly. Use a small documented baseline for other optional fields; do not silently copy fees, recurrence, seats, special questions, or other settings from an unrelated template. We do not need to ask about every optional field to create a basic type. Applying a future preparation-gap preference to Cal.com settings is a separate authorized operation.
+
 ## 3. Architecture and stack
 
-Recommended stack: FastAPI, Pydantic, HTTPX, SQLAlchemy 2 ORM, Alembic, and SQLite with the async driver. Use `uv` for Python dependencies and `pnpm` for frontend dependencies, with committed lockfiles. Use Next.js App Router, a small component library if useful, and GitHub-flavoured Markdown rendering.
+Recommended stack: FastAPI, Pydantic, HTTPX, Peewee ORM, and SQLite, with Peewee's versioned migration tooling. Peewee replaces the previous SQLAlchemy/Alembic recommendation; the ORM choice remains a recommendation until agreed. Use `uv` for Python dependencies and `pnpm` for frontend dependencies, with committed lockfiles. Use Next.js App Router, Tailwind CSS, Headless UI React components, and GitHub-flavoured Markdown rendering. Headless UI supplies accessible interaction primitives; Tailwind CSS supplies the visual styling. See [Next.js/Tailwind setup](https://tailwindcss.com/docs/installation/framework-guides/nextjs) and [Headless UI](https://headlessui.com/).
 
 ```mermaid
 flowchart TD
@@ -73,7 +83,7 @@ flowchart TD
 
 Keep one Python agent loop rather than a collection of specialist agents. It assembles context, asks the model for its next response/tool calls, validates and dispatches tools, records results, and continues until it can answer or needs clarification. A small explicit state machine is enough; no agent framework, vector database, Redis, or separate workflow service is recommended initially.
 
-Run one backend process/replica initially. A supervised runner started through FastAPI's lifespan claims persisted queued runs; execution is independent of the browser connection. Use one active run per user, bounded total concurrency, short database transactions, and separate ORM sessions per task. Never keep a write transaction open while awaiting Cal.com or an LLM. See [SQLAlchemy async sessions](https://docs.sqlalchemy.org/en/20/orm/extensions/asyncio.html).
+Run one backend process/replica initially. A supervised runner started through FastAPI's lifespan claims persisted queued runs; execution is independent of the browser connection. Use one active run per user, bounded total concurrency, short database transactions, and task-scoped database connections. With the recommended Peewee async integration, keep a transaction in one task; do not spawn child query tasks inside it or hold a connection for the lifetime of an SSE response. Never keep a write transaction open while awaiting Cal.com or an LLM. See [Peewee async integration](https://docs.peewee-orm.com/en/latest/peewee/asyncio.html).
 
 Serve browser requests through one public origin. Next.js proxies `/api` and the event stream to the internal backend, without moving business logic into Next.js. Verify cookie forwarding, streaming flushes, timeouts, and disabled proxy buffering. The hosting environment supplies HTTPS; it is not a third app container.
 
@@ -120,7 +130,21 @@ Check slots immediately before a mutation; a slot lookup is not a reservation. H
 
 ## 6. Agent execution, streaming, and recovery
 
-Recommended run lifecycle: `queued → running → waiting_for_user | succeeded | failed | interrupted | needs_reconciliation`. Persist waiting confirmations separately so a short “yes” can authorize only the intended action. Bound model steps, tool calls, execution time, and output tokens; make limits configurable. Check the pending-request revision and stop/correction state immediately before dispatching a mutation; never act on a superseded request.
+Recommended run lifecycle: `queued → running → waiting_for_user | succeeded | failed | interrupted | needs_reconciliation`. Persist waiting confirmations separately so a short “yes” can authorize only the intended action. Bound model steps, tool calls, execution time, and output tokens; make limits configurable. New messages interrupt the active run at the next safe checkpoint; preserve its completed actions and incorporate the new message when replanning. A correction cannot retroactively withdraw an action already committed for dispatch.
+
+### Atomic correction acceptance and dispatch claims
+
+A separate revision read followed by an HTTP call is insufficient: a correction can commit between them. Replace it with a database-backed dispatch gate shared by message acceptance, Stop, connection changes, and the action executor. An in-memory `asyncio.Lock` may reduce contention but is not the correctness mechanism.
+
+1. **Accept a message atomically:** deduplicate its client request ID, store it, increment the conversation's request revision, request interruption of the previous run, invalidate superseded uncommitted actions/confirmations, and record the next runnable work in one transaction. A duplicate HTTP submission must not increment the revision twice. Return the committed revision and whether an action was already committed for dispatch. For an exact pending confirmation response, record its target/evidence and carry the proposed action into the new revision rather than invalidating it; validate and consume its dispatch authorization only in step 3.
+2. **Prepare outside the write lock:** resolve intent, validate inputs, and fetch live booking/slot information. Carry the request revision, connection generation, run lease/fencing token, and exact authorization into the proposed action.
+3. **Claim dispatch atomically:** in a short SQLite `IMMEDIATE` transaction, use an ORM conditional update of the same conversation gate, matching the expected revision, no stop flag, valid connection/run generation, and no unresolved active mutation. Validate/consume the required confirmation and move the exact action from `prepared` to `dispatch_committed` in this same transaction. Commit its immutable payload, unique dispatch identity, and active-action pointer together. If the guarded update affects no row or any validation fails, roll back and do not call Cal.com.
+4. **Define the boundary explicitly:** the successful dispatch-claim commit is the local point of no return. A correction committed first invalidates the stale claim. A claim committed first means the later correction is accepted and saved but cannot revoke that committed dispatch, even if the HTTP request has not started yet. Dispatch promptly after commit; report that the earlier action may complete and resolve its outcome before executing a dependent correction.
+5. **Dispatch and settle:** only the owning executor sends the immutable request. Record its result/action receipt and release the active-action gate in a new transaction. Stop/correction interrupts model work at a safe checkpoint; it must not cancel settlement of a committed request or release its gate early. A newer message can stop further old-run actions, but cannot erase this result. On a timeout, lost lease, or crash after claim, retain the gate as unresolved and reconcile; do not let a replacement executor blindly resend the action or start a conflicting follow-up.
+
+This serializes our competing local decisions; it does **not** make the SQLite commit and Cal.com's network operation one atomic transaction. Do not hold a database lock across HTTP or promise that a last-millisecond Stop can recall an already committed action. Cal.com remains responsible for accepting/rejecting the live slot. The claim/outcome records form a small durable dispatch ledger; adding a queue/outbox alone would not provide exactly-once external execution. See [Peewee transaction/locking modes](https://docs.peewee-orm.com/en/latest/peewee/transactions.html).
+
+Recommended action lifecycle: `prepared → dispatch_committed → succeeded | failed | unknown`, with `prepared → superseded` when a correction wins. On future PostgreSQL migration, preserve the same ordering with a locked conversation row/conditional update and constraints; do not rely on SQLite's single-writer behaviour implicitly.
 
 Recommended HTTP contract:
 
@@ -128,7 +152,7 @@ Recommended HTTP contract:
 - `GET /api/chat/history`: paginated transcript for this user's single conversation.
 - `GET /api/runs/{id}`: status and committed action outcomes.
 - `GET /api/runs/{id}/events`: authenticated SSE; resume using event ID or `after` sequence.
-- `POST /api/runs/{id}/stop`: stop at a safe boundary; never promise rollback of an already dispatched request.
+- `POST /api/runs/{id}/stop`: atomically compete with the dispatch claim; return whether stopping prevented dispatch or a committed action still needs resolution.
 - Auth and Cal.com connection routes: registration/login/logout, account profile, masked connection status, connect/replace/disconnect.
 
 Stream path: **provider → backend normalization → SQLite commit → SSE → browser**. This implements “stream straight to frontend” with the backend as the authenticated persistence boundary. No extra model rewrites the response.
@@ -141,7 +165,7 @@ Disconnecting the browser does not cancel the run. Reconnect replays committed e
 
 ### External side effects and duplicates
 
-Saving chat chunks alone does **not** make booking creation crash-safe. Before each write, commit an action record with the run/request identity, normalized argument digest, target, and authorization. Deduplicate an exact retry of that action; do not use a hash of booking details as a permanent ban on future similar bookings.
+Saving chat chunks alone does **not** make booking creation crash-safe. Use the atomic dispatch claim above to commit the action's identity, immutable inputs/digest, target, and authorization before sending it. Enforce uniqueness of its dispatch identity and one unresolved mutation per conversation. Deduplicate an exact retry of that action; do not use a hash of booking details as a permanent ban on future similar bookings.
 
 There is an unavoidable boundary between Cal.com accepting a request and SQLite recording its result. If a write times out or the process dies there, mark the action outcome unknown and reconcile using live booking data. Investigate whether a supported idempotency mechanism or echoed action metadata can help; no guarantee is assumed from the reviewed docs. Use returned UIDs and uniquely corroborated evidence, not only attendee/time similarity. If reconciliation is ambiguous, surface it and require review before repeating the write. Read retries may use bounded backoff; uncertain mutations never retry blindly.
 
@@ -169,7 +193,11 @@ Expose bounded application tools such as `search_history`, `get_past_action`, an
 
 ## 8. Database and observability
 
-**Recommended ORM: SQLAlchemy 2 with Alembic migrations.** It gives explicit models, typed queries, transaction control, and a path to PostgreSQL. Keep API/agent schemas in Pydantic and database models separate. Use ORM queries for application access; no handwritten business SQL. See [SQLAlchemy](https://docs.sqlalchemy.org/en/20/orm/) and [Alembic](https://alembic.sqlalchemy.org/en/latest/).
+**Revised ORM recommendation: Peewee.** SQLAlchemy is not required for this design. Peewee covers our relational models, indexes, transactions, conditional updates, and SQLite/PostgreSQL access with a smaller model/query API. Its current 4.x documentation includes first-party async integration and a versioned migration runner (`pwmigrate`). Pin a verified compatible release and driver dependencies during implementation. See [Peewee](https://docs.peewee-orm.com/en/latest/), [database support](https://docs.peewee-orm.com/en/latest/peewee/database.html), and [migrations](https://docs.peewee-orm.com/en/latest/peewee/db_tools.html#migration-runner).
+
+SQLAlchemy/Alembic remains a reasonable alternative if we prefer its richer session/mapping model and migration ecosystem. Our current database needs do not depend on those additional facilities. The difficult part here is defining correct action states and transaction boundaries; either ORM still requires that application logic. Keep Pydantic API/agent schemas separate from database models, use thin domain repositories, and avoid a generic repository framework. All business queries, conditional updates, and locking-mode setup use ORM APIs.
+
+Recommended FastAPI integration: Peewee's async SQLite backend with short task-scoped connections and bounded queries. Verify the selected version's `IMMEDIATE` transaction behaviour with concurrency tests. Database awaits inside a transaction stay in the same task; no LLM/network work belongs there. Do not use Peewee's SQLite queue wrapper as a substitute for the multi-statement atomic dispatch transaction. Migration scripts are versioned and reviewed, especially generated field renames or destructive changes; no Alembic dependency is needed with this recommendation.
 
 Initial logical tables; split model files by domain rather than creating one enormous schema file:
 
@@ -178,11 +206,11 @@ Initial logical tables; split model files by domain rather than creating one eno
 | `users` | Email identity, password hash, time zone, account timestamps. |
 | `sessions` | Hashed opaque session token, user, expiry, revocation. |
 | `cal_connections` | Unique user ID, encrypted key, Cal.com owner ID, key version/fingerprint, connection generation/status. |
-| `conversations` | Unique user ID: one ongoing conversation, structured pending request, and request revision. |
+| `conversations` | Unique user ID: one conversation, pending request/revision, stop state, active-action dispatch gate. |
 | `messages` | Conversation, role, content, original timestamp/zone, partial/final state, client request ID. |
 | `agent_runs` | Trigger message, provider/model, state, context version, attempts, lease/checkpoint. |
 | `run_events` | Run, unique increasing sequence, safe public event payload and timestamp. |
-| `actions` | Stable action ID, authorization/confirmation, normalized business inputs and digest, target/result UIDs, result snapshot, reconciliation state. |
+| `actions` | Stable/unique dispatch identity, request/connection/run generations, authorization/confirmation, immutable inputs/digest, target/result UIDs, result snapshot, dispatch/reconciliation state. |
 | `tool_calls` | Run/action/call IDs, sanitized input/output, error, timing, retry count. |
 | `model_calls` | Per-step provider/model, sanitized request/response, context reference, timing, usage, error/attempt. |
 | `context_snapshots` | Versioned compaction summary and covered-message boundary. |
@@ -197,15 +225,17 @@ Observability is local application execution history: correlated run/action/tool
 
 Start with structured logs and an authenticated development-only run-detail endpoint/CLI. A debugging dashboard is optional later. Redact before persistence and logging, not just in the UI: keys, cookies, auth headers, passwords, and sensitive verification codes must not enter trace records. Meeting links and attendee information are personal data, so traces need access controls and retention too.
 
+Agreed retention: keep canonical messages, request/action records, outcomes, and necessary context snapshots without automatic age-based deletion in the MVP. Account deletion and profile editing have no UI/API in this scope. Automatically purge detailed sanitized tool/model trace records after 30 days; retain minimal canonical action/status evidence needed for history and recovery. A proposed 30-day replay-event window may be cleaned up too, provided an expired SSE cursor falls back to canonical history and receipts. Never purge unresolved action evidence or break recovery/context references. Cleanup runs as a periodic backend maintenance task and is also exposed through Make, separate from prompt compaction; no additional container is needed.
+
 ## 9. Accounts and secret handling
 
-Use email/password accounts backed by FastAPI. Recommended password implementation: Argon2id through a maintained library such as `pwdlib[argon2]`, with a unique random salt generated by the library and encoded into each hash. Store no plaintext password or reversible password encryption. Calibrate work factors, verify with the library, and rehash on login when settings change. See [OWASP password storage](https://cheatsheetseries.owasp.org/cheatsheets/Password_Storage_Cheat_Sheet.html).
+Use email/password registration, login, and logout backed by FastAPI. No account deletion, email/profile editing, email verification, or password-reset workflow in the initial scope. Cal.com connection management is separate and remains available. Recommended password implementation: Argon2id through a maintained library such as `pwdlib[argon2]`, with a unique random salt generated by the library and encoded into each hash. Store no plaintext password or reversible password encryption. Calibrate work factors, verify with the library, and rehash on login when settings change. See [OWASP password storage](https://cheatsheetseries.owasp.org/cheatsheets/Password_Storage_Cheat_Sheet.html).
 
 Recommended sessions: random opaque session tokens in `HttpOnly`, `Secure` production cookies with `SameSite=Lax`; store only token hashes server-side. Rotate on login, expire and revoke on logout, use CSRF/origin checks for mutations, and rate-limit auth and chat requests. Avoid browser local storage for credentials. Development cookie behaviour must still support local HTTP explicitly.
 
 The connection settings screen sends the Cal.com key over HTTPS to the backend, which validates it through `/v2/me`. Store it with authenticated encryption using `cryptography` Fernet, including the associated user/owner identity inside the authenticated payload to detect row substitution. Store the encryption master key separately as a backend deployment secret, never in SQLite, Git, a frontend build variable, or logs. Track key versions and support rotation. See [Fernet](https://cryptography.io/en/latest/fernet/).
 
-Only masked connection status/fingerprint returns to the browser; clear the input after submission. Unconnected users can use account/settings screens, but booking actions require a valid connection. Key replacement is atomic after validation; disconnect prevents new dispatches. Replacing with a different owner requires an explicit account-relink flow and invalidates old pending state. Do not force global Cal.com-owner uniqueness across app accounts unless we choose that product policy.
+Only masked connection status/fingerprint returns to the browser; clear the input after submission. Unconnected users can use connection settings, but booking actions require a valid connection. Key replacement/disconnection participates in the same transactional dispatch gate: if it commits first, stale claims fail; a dispatch committed first cannot be recalled. Do not delete the old action evidence or credentials needed to settle a committed request prematurely. Replacing with a different owner requires an explicit account-relink flow and invalidates old pending state. Do not force global Cal.com-owner uniqueness across app accounts unless we choose that product policy.
 
 The project OpenRouter key and encryption master key are separate secrets. The existing `.env` is already ignored and was not read or used in planning. During implementation, offer an explicit local developer connection import rather than implicitly applying this key to every registered user. Commit placeholders only; ignore database/WAL files, credentials, and local runtime state in both Git and Docker build contexts.
 
@@ -239,7 +269,7 @@ This is a draft contract, not the only protection. Python enforces ownership, co
 
 ## 11. Frontend experience
 
-Keep the app small: account entry, Cal.com connection settings, and the ongoing chat. Display streaming replies, Markdown tables, readable dates/time zones, safe progress states, clarification/confirmation prompts, and final action receipts. Preserve history on reload and show reconnecting/interrupted/failed states explicitly.
+Keep the app small: polished, responsive login/registration pages, Cal.com connection settings, and the ongoing chat. Use Tailwind CSS for layout/design and free Headless UI React components for forms, dialogs, and appropriate interactive controls; there is no Tailwind Plus purchase/dependency. Include accessible labels, keyboard/focus states, password visibility controls, inline errors, and loading states. There are no profile-editing or account-deletion pages. Display streaming replies, Markdown tables, readable dates/time zones, safe progress states, clarification/confirmation prompts, and final action receipts. Preserve history on reload and show reconnecting/interrupted/failed states explicitly.
 
 Recommended: typed confirmation controls inside the conversation, with a plain-text “yes/no” path for accessibility and future voice. Generate target details from backend action data. Avoid relying on the model to fabricate a button or parse its own Markdown into authorization. Provide a Stop control with clear “already completed actions remain completed” semantics.
 
@@ -279,7 +309,7 @@ backend/
     tools/                  # typed tool definitions and dispatch
     calcom/                 # versioned client and resource adapters
     services/               # application operations/recovery
-    db/                     # models/ and ORM repositories/
+    db/                     # Peewee models/ and domain repositories/
     core/                   # config, secrets, logging
   migrations/
   tests/unit/
@@ -291,9 +321,11 @@ Keep business logic out of API routes/components; split by responsibility before
 
 Python: Ruff lint/format, mypy, pytest, pytest-asyncio, and mocked HTTPX responses. Frontend: ESLint, Prettier, TypeScript checking, Vitest/Testing Library, and a few Playwright end-to-end flows. Add pre-commit hooks and CI to run the same checks. Automated tests use fake providers/Cal.com responses; real-account smoke tests are opt-in and use a dedicated account and explicit fixture cleanup.
 
-Essential tests cover the four challenge operations plus event-type creation; missing attendee fields; ambiguity and exact cancellation confirmation; live duration rounding and explicit end times; relative dates/DST; correction after booking and after compaction; replacement UIDs; cross-user access; password verification/key encryption/redaction; fragmented tool calls; provider errors; reconnection replay; double-submit deduplication; restart recovery around mutation dispatch; and unknown outcomes without duplicate bookings. Use temporary on-disk SQLite for WAL/recovery tests and Alembic migration tests, rather than relying only on in-memory databases.
+Essential tests cover the four challenge operations plus event-type creation; missing attendee fields; ambiguity and exact cancellation confirmation; live duration rounding and explicit end times; relative dates/DST; correction after booking and after compaction; replacement UIDs; cross-user access; password verification/key encryption/redaction; fragmented tool calls; provider errors; reconnection replay; double-submit deduplication; restart recovery around mutation dispatch; and unknown outcomes without duplicate bookings. Use temporary on-disk SQLite for WAL/recovery and versioned Peewee migration tests, rather than relying only on in-memory databases.
 
-Suggested Make targets: `help`, `setup`, `dev`, `up`, `down`, `logs`, `migrate`, `format`, `lint`, `typecheck`, `test`, `test-backend`, `test-frontend`, `test-e2e`, and `check`. Default test targets must never read live keys or send bookings. Provide native local dev and Compose paths without hiding failures behind shell commands.
+Use deterministic concurrency barriers with separate database connections to prove both correction/claim orderings, a single winner among competing executors, one-time confirmation consumption, duplicate-message revision stability, Stop/credential-change ordering, and crash handling on both sides of dispatch commit. Assert no HTTP call when a correction wins, and no automatic resend or conflicting follow-up when a committed action's outcome is unknown. Do not test races using arbitrary sleeps. Include 30-day debug-payload cleanup without loss of canonical history/unresolved action evidence.
+
+Suggested Make targets: `help`, `setup`, `dev`, `up`, `down`, `logs`, `migrate`, `cleanup-traces`, `format`, `lint`, `typecheck`, `test`, `test-backend`, `test-frontend`, `test-e2e`, and `check`. Default test targets must never read live keys or send bookings. Provide native local dev and Compose paths without hiding failures behind shell commands.
 
 Implement and commit in reviewable milestones:
 
@@ -314,11 +346,8 @@ These are recommendations/questions, not settled user decisions:
 
 | Decision | Recommendation / question |
 | --- | --- |
-| New messages during execution | Choose ordered queueing or automatic interruption at the next safe checkpoint. Recommend interruption for corrections before dispatch; an already dispatched Cal.com request cannot be recalled. A correction after completion acts on its recorded result. |
-| Event-type creation UX | An explicit “create a 45-minute consultation type” is authorization once details are complete. An implicitly needed type requires a question; offer a combined “create this type and book it” confirmation. Is this distinction right? |
-| Template defaults | Reuse account schedule/location defaults only when they are unambiguous and supported. Otherwise ask. Which defaults do you want for newly created types? |
-| History/trace retention | Proposed local MVP: retain chat/actions until user deletion; retain detailed debug payloads for 30 days, with configurable cleanup. Prompt compaction is separate. What retention do you want? |
-| Account lifecycle | Email/password signup/login/logout for MVP; invite-only deployment recommended for the challenge. Are public signup, email verification, and password reset required in the first release? |
+| ORM choice | Recommend Peewee with its async SQLite integration and versioned migrations. SQLAlchemy/Alembic is no longer assumed; see section 8. |
+| Template defaults | For a new type, use an unambiguous account-default availability schedule and supported default meeting location; otherwise ask. See section 2 for what these settings mean. |
 | First model and budgets | Choose after provider feasibility/evaluation. Set explicit model-step/token/time limits; discuss any paid smoke-test allowance before spending. |
 
 Implementation acceptance: an authenticated user can connect their key, list/create/cancel/reschedule bookings, create an event type, and correct a prior request conversationally. Replies stream and survive reload; tenant boundaries and keys remain protected; uncertain writes never trigger blind duplicate requests; history compacts without losing active targets; documented Make commands and automated tests work from a clean checkout. Cal Events and future features remain excluded from this acceptance scope.
