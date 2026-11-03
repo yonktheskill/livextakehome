@@ -1,5 +1,8 @@
 """Narrow Cal.com HTTP transport. No raw bodies/exceptions escape to model or browser."""
 
+import os
+import ssl
+
 import httpx
 
 VERSIONS = {
@@ -19,6 +22,11 @@ class CalError(Exception):
 
 class CalClient:
     def __init__(self, key: str, transport=None):
+        # Honor configured CA roots without enabling ambient HTTP(S) proxies.
+        cafile, capath = os.getenv("SSL_CERT_FILE"), os.getenv("SSL_CERT_DIR")
+        verify = (
+            ssl.create_default_context(cafile=cafile, capath=capath) if cafile or capath else True
+        )
         self.http = httpx.AsyncClient(
             base_url="https://api.cal.com",
             timeout=25,
@@ -26,6 +34,7 @@ class CalClient:
             transport=transport,
             follow_redirects=False,
             trust_env=False,
+            verify=verify,
         )
 
     async def request(self, method, path, *, params=None, payload=None, version=None):
@@ -38,10 +47,20 @@ class CalClient:
             response = await self.http.request(
                 method, path, params=params, json=payload, headers=headers
             )
-        except httpx.RequestError:
-            raise CalError(
-                "Cal.com connection failed; outcome may be unknown.", uncertain=method != "GET"
-            ) from None
+        except httpx.RequestError as exc:
+            if isinstance(exc, httpx.ConnectError):
+                message = (
+                    "Could not connect to Cal.com. "
+                    "Check backend network access and trusted TLS CA certificates."
+                )
+            elif isinstance(exc, httpx.TimeoutException):
+                message = "Cal.com request timed out; try again later."
+            else:
+                message = "Cal.com connection failed; check backend network access."
+            uncertain = method != "GET"
+            if uncertain:
+                message += " The operation outcome may be unknown."
+            raise CalError(message, uncertain=uncertain) from None
         if response.status_code >= 400:
             messages = {
                 401: "Cal.com key expired or invalid; reconnect in settings.",
