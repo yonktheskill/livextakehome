@@ -1,0 +1,21 @@
+[project]
+name = "cal-assistant-backend"
+version = "0.1.0"
+requires-python = ">=3.12,<3.15"
+dependencies = ["fastapi>=0.115,<1", "uvicorn[standard]>=0.30", "peewee>=3.18,<4", "cryptography>=44", "argon2-cffi>=23", "httpx>=0.28", "pydantic-settings>=2.7", "email-validator>=2"]
+[project.optional-dependencies]
+codex = ["openai-codex==0.163.0"]
+[dependency-groups]
+dev = ["pytest>=8", "pytest-asyncio>=0.25", "ruff>=0.9", "mypy>=1.14", "types-peewee>=3.18,<4"]
+[tool.pytest.ini_options]
+asyncio_mode = "auto"
+asyncio_default_fixture_loop_scope = "function"
+pythonpath = ["."]
+[tool.ruff]
+line-length = 100
+[tool.ruff.lint]
+select = ["E", "F", "I", "UP", "B"]
+[tool.mypy]
+python_version = "3.12"
+ignore_missing_imports = true
+check_untyped_defs = true

@@ -1,0 +1,143 @@
+import asyncio
+import json
+from datetime import UTC, datetime
+from uuid import UUID
+
+from fastapi import APIRouter, HTTPException, Request
+from fastapi.responses import StreamingResponse
+from pydantic import BaseModel, Field
+
+from app.api.auth import current
+from app.db.database import query
+from app.db.models import Conversation, Event, Message, Run, Trace
+from app.db.repository import TERMINAL, accept, stop
+
+router = APIRouter(prefix="/api")
+
+
+class Submission(BaseModel):
+    content: str = Field(min_length=1, max_length=12000)
+    client_request_id: UUID
+
+
+def owned_run(run_id, user_id):
+    run = (
+        Run.select()
+        .join(Conversation)
+        .where((Run.id == run_id) & (Conversation.user == user_id))
+        .first()
+    )
+    if not run:
+        raise HTTPException(404, "Run not found.")
+    return run
+
+
+@router.get("/chat/history")
+async def history(request: Request, before: str | None = None):
+    user = await current(request)
+
+    def load():
+        conv = Conversation.get(Conversation.user == user.id)
+        rows = Message.select().where(Message.conversation == conv)
+        if before:
+            boundary = Message.get_or_none((Message.id == before) & (Message.conversation == conv))
+            if not boundary:
+                raise HTTPException(400, "Invalid history cursor.")
+            rows = rows.where(
+                (Message.created_at < boundary.created_at)
+                | ((Message.created_at == boundary.created_at) & (Message.id < boundary.id))
+            )
+        page = list(rows.order_by(Message.created_at.desc(), Message.id.desc()).limit(51))
+        has_more = len(page) > 50
+        page = page[:50]
+        return {
+            "messages": [
+                {
+                    "id": m.id,
+                    "role": m.role,
+                    "content": m.content,
+                    "created_at": datetime.fromtimestamp(m.created_at, UTC).isoformat(),
+                    "status": m.status,
+                }
+                for m in reversed(page)
+            ],
+            "next_cursor": page[-1].id if has_more else None,
+        }
+
+    return await query(load)
+
+
+@router.post("/chat/messages")
+async def submit(data: Submission, request: Request):
+    user = await current(request)
+    if not data.content.strip():
+        raise HTTPException(422, "Message cannot be blank.")
+    return await query(accept, user, data.content, str(data.client_request_id))
+
+
+@router.get("/runs/{run_id}")
+async def get_run(run_id: str, request: Request):
+    user = await current(request)
+    run = await query(owned_run, run_id, user.id)
+    return {"id": run.id, "status": run.status}
+
+
+@router.post("/runs/{run_id}/stop")
+async def stop_run(run_id: str, request: Request):
+    user = await current(request)
+    await query(owned_run, run_id, user.id)
+    return await query(stop, run_id)
+
+
+@router.get("/runs/{run_id}/events")
+async def events(run_id: str, request: Request, after: int = 0):
+    user = await current(request)
+    await query(owned_run, run_id, user.id)
+    try:
+        after = max(0, after, int(request.headers.get("last-event-id", "0")))
+    except ValueError:
+        raise HTTPException(400, "Invalid event cursor.") from None
+
+    def batch(cursor):
+        rows = list(
+            Event.select()
+            .where((Event.run == run_id) & (Event.sequence > cursor))
+            .order_by(Event.sequence)
+            .limit(100)
+        )
+        return [(r.sequence, r.kind, r.payload) for r in rows], Run.get_by_id(run_id).status
+
+    async def stream():
+        cursor = after
+        heartbeat = 0
+        while not await request.is_disconnected():
+            rows, status = await query(batch, cursor)
+            for sequence, kind, payload in rows:
+                yield f"id: {sequence}\nevent: {kind}\ndata: {payload}\n\n"
+                cursor = sequence
+            if status in TERMINAL and len(rows) < 100:
+                return
+            if heartbeat % 40 == 0:
+                yield ": keepalive\n\n"
+            heartbeat += 1
+            await asyncio.sleep(0.25)
+
+    return StreamingResponse(
+        stream(),
+        media_type="text/event-stream",
+        headers={"Cache-Control": "no-cache, no-transform", "X-Accel-Buffering": "no"},
+    )
+
+
+@router.get("/runs/{run_id}/debug")
+async def debug(run_id: str, request: Request):
+    if not request.app.state.settings.debug_api:
+        raise HTTPException(404, "Not found.")
+    user = await current(request)
+    await query(owned_run, run_id, user.id)
+    return await query(
+        lambda: [
+            {"kind": t.kind, "metadata": json.loads(t.payload)}
+            for t in Trace.select().where(Trace.run == run_id).limit(100)
+        ]
+    )
