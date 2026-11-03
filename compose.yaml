@@ -1,0 +1,36 @@
+services:
+  backend:
+    build: ./backend
+    environment:
+      MASTER_SECRET: ${MASTER_SECRET:?Run make init-dev and configure .env.local}
+      DATABASE_PATH: /app/data/app.sqlite3
+      PUBLIC_ORIGIN: ${PUBLIC_ORIGIN:-http://localhost:3000}
+      COOKIE_SECURE: ${COOKIE_SECURE:-false}
+      LLM_PROVIDER: ${LLM_PROVIDER:-codex}
+      LLM_MODEL: ${LLM_MODEL:-}
+      OPENROUTER_API_KEY: ${OPENROUTER_API_KEY:-}
+    volumes:
+      - backend-data:/app/data
+    expose:
+      - "8000"
+    healthcheck:
+      test: [CMD, python, -c, "import urllib.request; urllib.request.urlopen('http://localhost:8000/api/health')"]
+      interval: 10s
+      timeout: 3s
+      retries: 5
+    restart: unless-stopped
+  frontend:
+    build:
+      context: ./frontend
+      args:
+        BACKEND_URL: http://backend:8000
+    ports:
+      - "127.0.0.1:3000:3000"
+    environment:
+      NEXT_TELEMETRY_DISABLED: "1"
+    depends_on:
+      backend:
+        condition: service_healthy
+    restart: unless-stopped
+volumes:
+  backend-data:
