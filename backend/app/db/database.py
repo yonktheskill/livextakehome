@@ -31,11 +31,12 @@ def initialize(path: str):
             migrator = SqliteMigrator(db)
             migrate(
                 migrator.add_column("action", "logical_key", CharField(null=True)),
-                migrator.add_column("action", "request", TextField(default="{}")),
+                migrator.add_column("action", "request", TextField(null=True)),
                 migrator.add_index("action", ("logical_key",), unique=True),
             )
             from app.db.models import Action
 
+            Action.update(request="{}").where(Action.request.is_null()).execute()
             # Old preparations lack frozen HTTP evidence and must be proposed again.
             Action.update(state="superseded").where(
                 Action.state.in_(["prepared", "authorized", "awaiting_confirmation"])

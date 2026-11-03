@@ -101,7 +101,7 @@ class Action(Base):
     kind = CharField()
     inputs = TextField()
     logical_key = CharField(null=True, unique=True)
-    request = TextField(default="{}")
+    request = TextField(default="{}", null=True)
     fingerprint = CharField()
     state = CharField(default="prepared", index=True)
     result = TextField(default="{}")

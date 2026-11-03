@@ -132,7 +132,7 @@ class Executor:
                 if exc.uncertain:
                     raise UnknownOutcome() from None
                 return {"error": str(exc)}
-            outcome = {"response": result, "validated": details}
+            outcome = {"response": result, "validated": frozen["validation"]}
             await query(self.record, action_id, "succeeded", outcome)
             return outcome
         except StalePreparation:
