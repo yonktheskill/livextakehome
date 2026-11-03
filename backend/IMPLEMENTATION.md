@@ -30,14 +30,11 @@ rotation, `MASTER_SECRET_PREVIOUS` is a JSON list of old Fernet keys; newly conn
 keys use the current key. Existing rows can be reconnected while the old key is
 available. Automatic bulk re-encryption is not implemented.
 
-The configured default `LLM_PROVIDER=codex` currently fails at startup with explicit
-guidance: the provider owner's isolation investigation disabled that adapter. This
-is a known unavailable capability, not a working local inference mode. For offline
-UI use set `LLM_PROVIDER=fake` explicitly. It labels its output as offline and does
-not perform scheduling. For real inference select `LLM_PROVIDER=openrouter`,
-`LLM_MODEL` and project `OPENROUTER_API_KEY` explicitly. No paid fallback occurs.
-The optional `codex` dependency extra is pinned to the inspected SDK, but installing
-it does not enable the unsafe runtime. See `docs/provider-notes.md`.
+Codex is now an opt-in local development adapter with the pinned SDK. See
+`docs/codex-development.md` and root `make setup-codex` / `make codex-login`.
+The real runtime has an offline loopback test proving empty executable tools.
+Live account inference remains untested. There is no automatic paid fallback.
+Use explicit fake inference for offline UI checks, or configure OpenRouter model/key.
 
 ## Behaviour and safety
 
@@ -76,7 +73,8 @@ it does not enable the unsafe runtime. See `docs/provider-notes.md`.
   create-and-book request currently needs the type confirmation before continuing.
 - Inference uses bounded recent messages, extractive snapshots with original time/zone,
   canonical recent action evidence, and owner-scoped lexical history retrieval. It
-  does not run a paid summarization call. Canonical history is not truncated/deleted.
+  uses configurable estimated token budgets and a 70% compaction threshold, not
+  just message counts; it does not run a paid summarization call. Canonical history is not truncated/deleted.
 
 ## Limits requiring further work
 
@@ -98,11 +96,12 @@ booking-field value types beyond text need extension. DST/ambiguous relative-dat
 clarification is prompted; Python requires offset-aware instants and valid IANA zones,
 but does not independently parse natural-language time expressions.
 
-The initial versioned schema is reviewed and idempotent; no historical schema upgrade
-exists yet. Add sequential playhouse migrations when schema version 2 is introduced.
-Only metadata (counts, elapsed time, provider/model, usage, correlation IDs) is traced;
-raw prompts, raw upstream errors and credentials are excluded. This limits forensic
-payload inspection intentionally. The debug endpoint is authenticated, scoped and
+Schema version 2 adds unique logical dispatch identity and frozen request evidence.
+Version 1 upgrades through Peewee migration APIs, invalidating legacy uncommitted
+preparations that lack complete dispatch evidence. Idempotence/upgrade tests pass.
+Detailed tool inputs/outputs/errors are now bounded and sanitized in traces;
+model metadata includes counts, elapsed time, provider/model, usage and correlation IDs.
+Raw prompts, private reasoning and credentials remain excluded. The debug endpoint is authenticated, scoped and
 disabled unless `DEBUG_API=true`.
 
 ## Documentation verified without credentials
@@ -115,3 +114,9 @@ disabled unless `DEBUG_API=true`.
   (`2026-05-01`; limit, cursor, top-level pagination; single status; containment date filters).
 - Booking create/reschedule and event-type reads were checked against their official
   endpoint pages. No Cal Events APIs are exposed.
+
+Review hardening: stale preparations are rejected inside the transaction; confirmations
+match the immediately prior revision and operation-specific phrases; competing
+preparations share a unique logical action. Frozen method/path/version/payload and
+authorization are stored before dispatch. Settlement, receipt event and canonical
+receipt message commit together, and history exposes owner-scoped structured receipts.

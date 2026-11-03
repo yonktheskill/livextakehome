@@ -118,9 +118,9 @@ The following headers were checked against live docs on 2026-11-03. **Version pe
 | `create_booking` | `POST /v2/bookings` | `2026-02-25` | Start, type ID, attendee, required fields, optional supported length/location. [Docs](https://cal.com/docs/api-reference/v2/bookings/create-a-booking) |
 | `reschedule_booking` | `POST /v2/bookings/{bookingUid}/reschedule` | `2026-02-25` | UID and new start; preserve other properties by default. [Docs](https://cal.com/docs/api-reference/v2/bookings/reschedule-a-booking) |
 | `cancel_booking` | `POST /v2/bookings/{bookingUid}/cancel` | `2026-02-25` | UID, optional reason; executor requires confirmed action. [Docs](https://cal.com/docs/api-reference/v2/bookings/cancel-a-booking) |
-| `create_event_type` | `POST /v2/event-types` | Recheck before implementation | Proposed narrow inputs: title, slug, length, description, approved schedule/location. [Docs](https://cal.com/docs/api-reference/v2/event-types/create-an-event-type) |
+| `create_event_type` | `POST /v2/event-types` | `2026-06-12` | Narrow inputs: title, slug, length, description, approved schedule/location. [Docs](https://cal.com/docs/api-reference/v2/event-types/create-an-event-type) |
 
-The event-type creation page loaded initially, but detailed follow-up retrieval timed out. Its exact version and required payload constraints remain a recorded research task; do not assume the GET version applies to POST. If selecting a schedule is necessary, add a read-only schedules helper after checking that endpoint. Schedule changes, event-type updates/deletion, teams, recurring booking creation, payments, and Cal Events are outside the MVP.
+The event-type creation page loaded initially, but detailed follow-up retrieval timed out. Implementation subsequently verified the creation version (`2026-06-12`), required fields and default Cal Video behaviour; see backend/IMPLEMENTATION.md. If selecting a schedule is necessary, add a read-only schedules helper after checking that endpoint. Schedule changes, event-type updates/deletion, teams, recurring booking creation, payments, and Cal Events are outside the MVP.
 
 Tool safety is deterministic Python code: Pydantic validation, authenticated user scope, allowed operation/field checks, current ownership, pending-confirmation checks, and availability checks. Do not expose conflict/limit/notice bypass flags. Assemble fragmented model arguments completely and validate them before execution; serialize mutations even if a provider returns parallel tool calls.
 
@@ -193,11 +193,11 @@ Expose bounded application tools such as `search_history`, `get_past_action`, an
 
 ## 8. Database and observability
 
-**Revised ORM recommendation: Peewee.** SQLAlchemy is not required for this design. Peewee covers our relational models, indexes, transactions, conditional updates, and SQLite/PostgreSQL access with a smaller model/query API. Its current 4.x documentation includes first-party async integration and a versioned migration runner (`pwmigrate`). Pin a verified compatible release and driver dependencies during implementation. See [Peewee](https://docs.peewee-orm.com/en/latest/), [database support](https://docs.peewee-orm.com/en/latest/peewee/database.html), and [migrations](https://docs.peewee-orm.com/en/latest/peewee/db_tools.html#migration-runner).
+**Implemented ORM: Peewee 3.19.** SQLAlchemy is not required for this design. Peewee covers our relational models, indexes, transactions, conditional updates, and SQLite/PostgreSQL access with a smaller model/query API. The implementation pins the tested 3.x line and offloads whole synchronous repository transactions to worker threads. Schema versions and additive upgrades use Peewee migration APIs; the newer 4.x async/pwmigrate interfaces are not application dependencies. See [Peewee](https://docs.peewee-orm.com/en/latest/), [database support](https://docs.peewee-orm.com/en/latest/peewee/database.html), and [migrations](https://docs.peewee-orm.com/en/latest/peewee/db_tools.html#migration-runner).
 
 SQLAlchemy/Alembic remains a reasonable alternative if we prefer its richer session/mapping model and migration ecosystem. Our current database needs do not depend on those additional facilities. The difficult part here is defining correct action states and transaction boundaries; either ORM still requires that application logic. Keep Pydantic API/agent schemas separate from database models, use thin domain repositories, and avoid a generic repository framework. All business queries, conditional updates, and locking-mode setup use ORM APIs.
 
-Recommended FastAPI integration: Peewee's async SQLite backend with short task-scoped connections and bounded queries. Verify the selected version's `IMMEDIATE` transaction behaviour with concurrency tests. Database awaits inside a transaction stay in the same task; no LLM/network work belongs there. Do not use Peewee's SQLite queue wrapper as a substitute for the multi-statement atomic dispatch transaction. Migration scripts are versioned and reviewed, especially generated field renames or destructive changes; no Alembic dependency is needed with this recommendation.
+Recommended FastAPI integration: Peewee 3.19 with complete synchronous repository transactions offloaded to worker threads and short thread-scoped connections and bounded queries. Verify the selected version's `IMMEDIATE` transaction behaviour with concurrency tests. Database awaits inside a transaction stay in the same task; no LLM/network work belongs there. Do not use Peewee's SQLite queue wrapper as a substitute for the multi-statement atomic dispatch transaction. Migration scripts are versioned and reviewed, especially generated field renames or destructive changes; no Alembic dependency is needed with this recommendation.
 
 Initial logical tables; split model files by domain rather than creating one enormous schema file:
 
@@ -340,16 +340,18 @@ Implement and commit in reviewable milestones:
 
 Each milestone can contain several small commits with its relevant tests. Keep secrets/runtime artifacts out of all commits; do not postpone all testing to the final milestone. Future features get separate milestones after the core demo works.
 
-## 14. Remaining discussion and acceptance
+## 14. Implementation status and acceptance
 
-These are recommendations/questions, not settled user decisions:
+Product decisions are settled. Live-account verification remains separate from the completed offline checks:
 
 | Decision | Recommendation / question |
 | --- | --- |
-| ORM choice | Recommend Peewee with its async SQLite integration and versioned migrations. SQLAlchemy/Alembic is no longer assumed; see section 8. |
-| Template defaults | For a new type, use an unambiguous account-default availability schedule and supported default meeting location; otherwise ask. See section 2 for what these settings mean. |
-| First model and budgets | Choose after provider feasibility/evaluation. Set explicit model-step/token/time limits; discuss any paid smoke-test allowance before spending. |
+| ORM choice | Implemented Peewee 3.19 with whole repository transactions offloaded to worker threads; schema version 2 has a tested upgrade. |
+| Template defaults | Agreed: use an unambiguous account-default availability schedule and supported default location, otherwise ask. |
+| First model and budgets | Local configuration proposes gpt-6.1-sol for Codex; account availability must be verified after sign-in. OpenRouter requires an explicitly configured model/key. Context, step, time and tool limits are implemented; Codex has no verified hard token ceiling. |
 
 Implementation acceptance: an authenticated user can connect their key, list/create/cancel/reschedule bookings, create an event type, and correct a prior request conversationally. Replies stream and survive reload; tenant boundaries and keys remain protected; uncertain writes never trigger blind duplicate requests; history compacts without losing active targets; documented Make commands and automated tests work from a clean checkout. Cal Events and future features remain excluded from this acceptance scope.
 
 Source basis: the supplied `README calcom.md` challenge and `cal_com_agent_reference.md`, live official Cal.com endpoint docs linked above, and the official provider/library/security docs. The user's live-duration and rounding decisions supersede the reference's observed-duration guidance. Account-specific behaviour, creation constraints, Codex integration parity, and proxy streaming still require the targeted implementation checks identified in this plan.
+
+Verified implementation milestones: accounts and encrypted connections; Cal.com tool validation; durable runs/SSE; atomic dispatch and canonical receipts; estimated-budget context and sanitized tool traces; frontend; isolated opt-in Codex adapter; CI/Make/Compose. Final offline checks: 87 backend tests, 19 frontend tests, 50 provider tests with the optional SDK, and real HTTP two-container smoke tests. Live Cal.com connectivity could not be established from the execution environment; no live mutations or signed-in model inference were performed. Unknown writes remain blocked pending operator reconciliation. Contacts, images, voice and persistent preferences remain future scope.

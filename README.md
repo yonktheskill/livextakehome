@@ -13,9 +13,19 @@ make init-dev
 
 `init-dev` creates a private `.env.local` with a newly generated encryption key. It never reads or changes the existing `.env`, and refuses to overwrite an existing configuration. Keep this master key backed up separately from the database; losing it prevents decrypting saved Cal.com keys.
 
-Choose the provider in `.env.local` before starting:
+For account-backed development, `init-dev` selects Codex and a dedicated login directory outside this repository. Complete sign-in privately:
 
-- `LLM_PROVIDER=codex` is the intended local account-based development path, but is **currently disabled** pending verified runtime isolation. See [provider notes](docs/provider-notes.md). There is no automatic paid fallback.
+```sh
+make setup-codex
+make codex-login
+make dev
+```
+
+The login command starts account authentication only; it does not make bookings or run inference. Check `LLM_MODEL` in `.env.local` against models available to your account. Native local Codex development supports macOS/Linux and uses the pinned runtime. See [Codex setup, isolation evidence and limits](docs/codex-development.md).
+
+Provider choices in `.env.local`:
+
+- `LLM_PROVIDER=codex` uses your dedicated account login with explicit local opt-in. Model tools are disabled and returned application-tool proposals are validated by the backend. Codex replies arrive in complete validated chunks; OpenRouter provides token streaming. There is no automatic paid fallback.
 - `LLM_PROVIDER=fake` explicitly selects an offline UI/development demo. It returns labelled canned text, does not understand scheduling, and makes no bookings.
 - `LLM_PROVIDER=openrouter` requires a project `OPENROUTER_API_KEY` and explicit `LLM_MODEL`. Usage is billed by that provider; keys stay backend-only. Scheduling quality and live model availability have not been evaluated yet.
 
@@ -41,6 +51,8 @@ Automated tests use temporary databases, fake providers, and mocked Cal.com HTTP
 
 ## Containers
 
+For containers, select OpenRouter and configure its project model/key, or use `make up LLM_PROVIDER=fake` for an offline demo. The production image excludes the optional native Codex SDK/login.
+
 ```sh
 make up
 make logs
@@ -59,4 +71,4 @@ Actions and response chunks are persisted before being published. A transactiona
 
 ## Implementation status
 
-Frontend, backend, and provider milestones are implemented. Final hardening and review are in progress. Both Docker images build. Real HTTP two-container tests passed cookies/auth, proxying, dedupe, SSE/history, CSRF, restart persistence, and logout using explicit fake inference. Live Cal.com writes, real model execution, and browser visual verification are not yet certified. Contacts, screenshot input, persistent preferences, and voice remain future work.
+Frontend, backend, and provider milestones are implemented. Review findings have regression tests and fixes. Both Docker images build. Real HTTP two-container tests passed cookies/auth, proxying, dedupe, SSE/history, CSRF, restart persistence, and logout using explicit fake inference. Final checks passed 87 backend tests and 19 frontend tests, plus the 50-test provider suite with the optional SDK. A read-only Cal.com check using the supplied key could not establish a connection from this execution environment (no mutations were attempted). Live writes, signed-in model inference and browser visual verification remain unverified. Contacts, screenshot input, persistent preferences, and voice remain future work.
