@@ -113,8 +113,8 @@ were checked, but account-specific permissions/integrations remain untested.
 
 Unknown outcomes currently require operator investigation and explicit database
 resolution after checking Cal.com; there is no reconciliation UI/CLI that can safely
-infer ownership of an unknown newly created booking. The app deliberately remains
-blocked rather than risking duplicate mutations. Bulk key re-encryption is deferred.
+infer ownership of an unknown newly created booking. The app remains blocked until a trusted operator verifies the frozen evidence
+and uses the audited [reconciliation CLI](../docs/recovery.md); no request is resent. Bulk key re-encryption is deferred.
 
 Listing walks at most five 100-record cursor pages and filters overlap locally to
 include appointments crossing date boundaries; `truncated=true` means a partial view.

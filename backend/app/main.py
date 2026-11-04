@@ -7,10 +7,11 @@ from time import monotonic
 from fastapi import FastAPI, HTTPException, Request
 from fastapi.exceptions import RequestValidationError
 from fastapi.responses import JSONResponse
+from pydantic import ValidationError
 
 from app.api import auth, chat, connection
 from app.core.config import Settings
-from app.core.security import KeyVault
+from app.core.security import KeyVault, digest
 from app.db.database import initialize, query
 
 
@@ -21,7 +22,7 @@ class RateBuckets:
         self.capacity = capacity
         self.buckets = OrderedDict()
 
-    def allow(self, key, now):
+    def allow(self, key, now, limit=30):
         while self.buckets:
             oldest, bucket = next(iter(self.buckets.items()))
             if bucket[-1] > now - 60:
@@ -35,7 +36,7 @@ class RateBuckets:
             self.buckets[key] = bucket
         while bucket and bucket[0] <= now - 60:
             bucket.popleft()
-        if len(bucket) >= 30:
+        if len(bucket) >= limit:
             return False
         bucket.append(now)
         self.buckets.move_to_end(key)
@@ -152,7 +153,23 @@ def create_app(settings=None, provider=None):
                         return JSONResponse({"detail": exc.detail}, status_code=exc.status_code)
                     identity = str(user.id)
                 else:
-                    identity = auth_address(request, settings)
+                    # Do not give every account behind Next.js the same small
+                    # login quota. Account limits also survive IP/session changes.
+                    try:
+                        credentials = auth.Credentials.model_validate(await request.json())
+                    except (ValueError, ValidationError):
+                        return JSONResponse(
+                            {"detail": "Invalid request; check required fields and formats."},
+                            status_code=422,
+                        )
+                    identity = digest(str(credentials.email).lower())
+                    # A wider source ceiling bounds floods across invented accounts.
+                    if not buckets.allow(
+                        ("auth-source", auth_address(request, settings)), monotonic(), limit=3000
+                    ):
+                        return JSONResponse(
+                            {"detail": "Too many requests; retry in a minute."}, status_code=429
+                        )
                 if not buckets.allow((category, identity), monotonic()):
                     return JSONResponse(
                         {"detail": "Too many requests; retry in a minute."}, status_code=429

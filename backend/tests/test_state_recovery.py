@@ -163,6 +163,32 @@ def test_reconciliation_audit_failure_rolls_back_receipt_and_resolution(account,
     assert not Event.select().where(Event.kind == "action.result").exists()
 
 
+def test_reconcile_reschedule_replacement_requires_exact_uid_lineage(account):
+    _, action_id = unknown(account)
+    action = Action.get_by_id(action_id)
+    request = json.loads(action.request)
+    request["path"] = "/v2/bookings/abc/reschedule"
+    Action.update(kind="reschedule_booking", request=json.dumps(request)).where(
+        Action.id == action_id
+    ).execute()
+    snapshot = inspect_unknown(action_id)
+    with pytest.raises(ValueError, match="UID lineage"):
+        resolve_unknown(
+            action_id, snapshot["digest"], "succeeded", "ops", "Verified audit", {"uid": "new-uid"}
+        )
+    resolve_unknown(
+        action_id,
+        snapshot["digest"],
+        "succeeded",
+        "ops",
+        "Verified replacement linkage in Cal.com",
+        {"uid": "new-uid", "rescheduledFromUid": "abc", "status": "accepted"},
+    )
+    result = json.loads(Action.get_by_id(action_id).result)
+    assert result["response"]["uid"] == "new-uid"
+    assert result["validated"]["uid"] == "abc"
+
+
 def test_verified_failure_unblocks_writes_without_resending(account):
     _, action_id = unknown(account)
     snapshot = inspect_unknown(action_id)
@@ -205,6 +231,36 @@ def test_ingress_address_only_trusts_explicit_peer_and_single_address():
     assert auth_address(request, settings) == "192.0.2.4"
     request.headers["x-real-ip"] = "192.0.2.4, 192.0.2.5"
     assert auth_address(request, settings) == "127.0.0.1"
+
+
+@pytest.mark.asyncio
+async def test_auth_account_quota_isolated_behind_same_proxy(account, monkeypatch):
+    import httpx
+
+    from app.api import auth
+    from app.db.models import User, db
+    from app.main import create_app
+
+    User.create(email="other@example.com", password_hash="unused")
+    monkeypatch.setattr(auth, "verify_password", lambda *_: False)
+    app = create_app(Settings(database_path=db.database, runner_enabled=False))
+    async with httpx.AsyncClient(
+        transport=httpx.ASGITransport(app=app), base_url="http://test"
+    ) as client:
+        attempt = {"email": "owner@example.com", "password": "wrong-password"}
+        for _ in range(30):
+            assert (await client.post("/api/auth/login", json=attempt)).status_code == 401
+        assert (await client.post("/api/auth/login", json=attempt)).status_code == 429
+        assert (
+            await client.post("/api/auth/login", json={**attempt, "email": "other@example.com"})
+        ).status_code == 401
+        assert (
+            await client.post(
+                "/api/auth/login",
+                json={**attempt, "email": "OWNER@example.com"},
+                headers={"x-forwarded-for": "192.0.2.99"},
+            )
+        ).status_code == 429
 
 
 @pytest.mark.asyncio

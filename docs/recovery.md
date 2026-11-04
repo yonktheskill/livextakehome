@@ -29,7 +29,9 @@ to trusted operators. Inspection includes private scheduling details.
    ```
 
 Use `--outcome failed` only for verified non-success. Success requires a resource
-identity and must match the frozen target where present. The command requires
+identity and must match the frozen target where present. A reschedule returning a
+replacement UID must include verified `rescheduledFromUid` matching the frozen
+original UID; attendee/time similarity alone is insufficient. The command requires
 unchanged evidence and an inactive unknown action, records the previous frozen
 evidence, operator, note and observation in a durable `action.reconciled` event,
 and creates the usual canonical receipt on success, atomically. Resolution is
@@ -45,16 +47,20 @@ routes. Unknown paths cannot allocate distinct route buckets. Buckets expire
 after 60 idle seconds and have a fixed capacity; new identities are denied while
 capacity is full. Limits are per application process.
 
-Anonymous login and registration share a quota per direct peer address by default.
-Forwarded headers are ignored by the application. The ASGI server must preserve
+Login and registration share a 30-attempt-per-minute quota per normalized account
+email (stored only as a digest in limiter keys), so accounts behind Next.js do not
+share that small quota. A broader 3,000-attempt source ceiling bounds floods across
+invented accounts. Forwarded headers are ignored by the application. The ASGI server must preserve
 its actual transport peer: launch Uvicorn with `--no-proxy-headers`, or set
 `FORWARDED_ALLOW_IPS=` (included in `.env.example`). Remove server-level proxy
 header trust before enabling application-managed ingress validation; otherwise
 the server may already have replaced the peer address. Existing `.env.local`
-files must add this setting explicitly. For deployments behind an ingress, explicitly set
+files must add this setting explicitly when using a custom launch command. The
+standard Dockerfile and Make development launch disable Uvicorn proxy headers
+explicitly. For deployments behind an ingress, explicitly set
 `TRUSTED_INGRESS_CIDRS` to a JSON list of only trusted proxy peer networks. Those
 peers must overwrite `X-Real-IP` with one verified client address and prevent
 clients from reaching the backend directly. Do not configure broad client
 networks or trust incoming forwarded chains. Without this ingress configuration,
-anonymous clients behind one proxy share its quota. Authenticated chat clients
-do not share that proxy quota.
+clients behind one proxy share only the broader source ceiling. Authenticated
+chat quotas and the normal login/registration quota remain account-scoped.

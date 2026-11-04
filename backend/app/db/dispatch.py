@@ -174,7 +174,9 @@ def resolve_unknown(action_id, expected_digest, outcome, operator, note, observa
                     action.kind == "reschedule_booking"
                     and observation.get("rescheduledFromUid") == target
                 ):
-                    raise ValueError("Observed resource does not match frozen target or UID lineage")
+                    raise ValueError(
+                        "Observed resource does not match frozen target or UID lineage"
+                    )
             result = {"response": observation, "validated": frozen.get("validation", {})}
         else:
             result = {
