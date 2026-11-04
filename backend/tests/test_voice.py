@@ -17,6 +17,12 @@ from app.db.models import (
     VoiceSession,
 )
 from app.db.repository import accept
+from app.db.requests import (
+    RequestConflict,
+    assert_requests_ready,
+    request_context,
+    resolve_requests,
+)
 from app.providers.voice import VoiceManager, chunks
 from app.tools.executor import Executor
 
@@ -70,6 +76,58 @@ def test_delegation_accepts_once_and_freezes_sources(account):
     assert Message.get_by_id(source_id).content == "Book a meeting"
     assert Run.get_by_id(run.id).interrupted
     assert Run.select().count() == 1
+
+
+@pytest.mark.parametrize("later_typed_request", [False, True])
+def test_all_delegated_voice_segments_are_visible_and_resolved_in_order(
+    account, later_typed_request
+):
+    user, _ = account
+    row = session(user)
+    voice.fragment(row.id, transcript("a", "Oh yeah, I cannot", 100, 500))
+    # The pause creates two display bubbles, but only the last gets its own Run.
+    voice.fragment(row.id, transcript("b", "Move Alice's meeting to 12:45", 4000, 4500))
+    run_id, _ = voice.delegate(row.id, delegation(cutoff=5000))
+    if later_typed_request:
+        run_id = accept(user, "Please make that change", str(uuid4()))["run_id"]
+    run = Run.get_by_id(run_id)
+    inbox = list(RequestInbox.select().order_by(RequestInbox.id))
+    assert not Run.select().where(Run.message == inbox[0].message_id).exists()
+    # Approximate audio timestamps must not determine inbox acceptance order.
+    Message.update(created_at=run.message.created_at + 60).where(
+        Message.id == inbox[0].message_id
+    ).execute()
+    assert [item["message_id"] for item in request_context(run_id, limit=1)["inbox"]] == [
+        inbox[0].message_id
+    ]
+    assert request_context(run_id, limit=1)["inbox_truncated"]
+    resolution = [{"relation": "dismiss", "reason": "No new booking task in this segment"}]
+    with pytest.raises(RequestConflict, match="older"):
+        resolve_requests(run_id, run.message_id, resolution)
+    with pytest.raises(RequestConflict, match="every pending"):
+        assert_requests_ready(run_id)
+    for pending in inbox:
+        ctx = request_context(run_id, limit=1)
+        assert ctx["inbox"][0]["message_id"] == pending.message_id
+        resolve_requests(run_id, pending.message_id, resolution)
+    assert request_context(run_id)["inbox"] == []
+    assert_requests_ready(run_id)
+
+
+def test_voice_inbox_context_excludes_segments_accepted_after_its_run(account):
+    user, _ = account
+    row = session(user)
+    voice.fragment(row.id, transcript("a", "First segment", 100, 500))
+    voice.fragment(row.id, transcript("b", "Second segment", 4000, 4500))
+    first_run, _ = voice.delegate(row.id, delegation(cutoff=5000))
+    first_ids = [i.message_id for i in RequestInbox.select().order_by(RequestInbox.id)]
+    voice.fragment(row.id, transcript("c", "Later segment", 6000, 6500))
+    voice.fragment(row.id, transcript("d", "Last segment", 10000, 10500))
+    second_run, _ = voice.delegate(row.id, delegation("second", cutoff=11000))
+    all_ids = [i.message_id for i in RequestInbox.select().order_by(RequestInbox.id)]
+    assert len(all_ids) == 4
+    assert [i["message_id"] for i in request_context(first_run)["inbox"]] == first_ids
+    assert [i["message_id"] for i in request_context(second_run)["inbox"]] == all_ids
 
 
 def test_cutoff_does_not_accept_newer_or_crossing_speech(account):

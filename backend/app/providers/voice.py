@@ -59,18 +59,8 @@ class VoiceConnection:
             self.end_reason = reason
             if reason == "user_requested":
                 await query(store.stop_work, self.session_id)
-                await self.send("session.input_audio.mute")
-            await self.send(
-                "session.commentary.append",
-                delegation_id=delegation_id,
-                content=(
-                    "The caller requested hang-up. Say a brief goodbye, then stop speaking."
-                    if reason == "user_requested"
-                    else "All requested work is complete and the booking is verified. "
-                    "After the confirmation you are already delivering, say only a brief goodbye "
-                    "and stop speaking. Do not repeat booking details or ask further questions."
-                ),
-            )
+            # Publish the disconnect instruction and arm its deadline before asking
+            # Live for a farewell. A failed sideband send must never strand the call.
             await query(
                 store.emit,
                 self.session_id,
@@ -81,11 +71,34 @@ class VoiceConnection:
                 },
             )
             self.end_task = asyncio.create_task(self.end_timeout(self.end_request))
+            try:
+                async with asyncio.timeout(5):
+                    if reason == "user_requested":
+                        await self.send("session.input_audio.mute")
+                    await self.send(
+                        "session.commentary.append",
+                        delegation_id=delegation_id,
+                        content=(
+                            "The caller requested hang-up. Say a brief goodbye, then stop speaking."
+                            if reason == "user_requested"
+                            else "All requested work is complete and the booking is verified. "
+                            "After the confirmation you are already delivering, say only a brief "
+                            "goodbye and stop speaking. Do not repeat booking details "
+                            "or ask further questions."
+                        ),
+                    )
+            except Exception:
+                await query(
+                    store.emit,
+                    self.session_id,
+                    "voice.notice",
+                    {"message": "Voice is closing; the farewell could not be delivered."},
+                )
 
     async def end_timeout(self, request_id):
         # Browser playback acknowledgment normally closes first. Bound billed sessions
         # if the browser disappears or cannot observe its audio player.
-        await asyncio.sleep(60)
+        await asyncio.sleep(15 if self.end_reason == "user_requested" else 60)
         async with self.end_lock:
             if self.end_request == request_id:
                 self.end_task = None

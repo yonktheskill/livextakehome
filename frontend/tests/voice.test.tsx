@@ -43,7 +43,7 @@ describe("voice connection", () => {
     Reflect.deleteProperty(navigator, "mediaDevices");
   });
 
-  function setup(stopFails = false) {
+  function setup(stopFails = false, playbackFails = false) {
     let events!: ReadableStreamDefaultController<Uint8Array>;
     const fetcher = vi.fn(async (url: string, init?: RequestInit) => {
       if (url.endsWith("/voice/config")) return json({ enabled: true });
@@ -57,7 +57,8 @@ describe("voice connection", () => {
           }),
         );
       if (url.endsWith("/mute")) return json(JSON.parse(init!.body as string));
-      if (url.endsWith("/playback-finished")) return json({ closed: true });
+      if (url.endsWith("/playback-finished"))
+        return playbackFails ? new Response("", { status: 503 }) : json({ closed: true });
       if (url.endsWith("/stop"))
         return stopFails ? new Response("", { status: 503 }) : json({ status: "closed" });
       throw new Error(`Unexpected URL ${url}`);
@@ -253,6 +254,61 @@ describe("voice connection", () => {
     expect(track.enabled).toBe(false);
     expect(voice.result.current.muted).toBe(true);
     expect(voice.result.current.state).toBe("ending");
+    voice.unmount();
+  });
+
+  it.each([undefined, true])(
+    "releases media after a spoken hangup even when audio monitoring returns %s and the terminal SSE event is lost",
+    async (audible) => {
+      vi.spyOn(playback, "monitorVoiceAudio").mockReturnValue({
+        sample: () => audible,
+        resume: vi.fn(async () => {}),
+        close: vi.fn(),
+      });
+      vi.spyOn(HTMLMediaElement.prototype, "paused", "get").mockReturnValue(false);
+      const voice = setup();
+      await waitFor(() => expect(voice.result.current.enabled).toBe(true));
+      await act(async () => {
+        await voice.result.current.start();
+      });
+      const ontrack = Peer.latest.ontrack as unknown as (event: { streams: unknown[] }) => void;
+      act(() => ontrack({ streams: [stream] }));
+      vi.useFakeTimers();
+      await act(async () => {
+        voice.emit(1, "voice.end_requested", { request_id: "hangup", reason: "user_requested" });
+      });
+      expect(track.enabled).toBe(false);
+      await act(async () => {
+        await vi.advanceTimersByTimeAsync(10000);
+      });
+      expect(voice.fetcher.mock.calls.filter(([url]) => url.endsWith("/playback-finished"))).toHaveLength(1);
+      expect(track.stop).toHaveBeenCalled();
+      expect(Peer.latest.close).toHaveBeenCalled();
+      expect(voice.result.current.state).toBe("idle");
+      expect(voice.result.current.active).toBe(false);
+      expect(voice.refresh).toHaveBeenCalledOnce();
+      voice.close();
+      voice.unmount();
+    },
+  );
+
+  it("falls back to explicit stop if the playback acknowledgment fails", async () => {
+    const voice = setup(false, true);
+    await waitFor(() => expect(voice.result.current.enabled).toBe(true));
+    await act(async () => {
+      await voice.result.current.start();
+    });
+    vi.useFakeTimers();
+    await act(async () => {
+      voice.emit(1, "voice.end_requested", { request_id: "hangup", reason: "user_requested" });
+      await vi.advanceTimersByTimeAsync(10000);
+    });
+    expect(voice.fetcher.mock.calls.filter(([url]) => url.endsWith("/stop"))).toHaveLength(1);
+    expect(track.stop).toHaveBeenCalled();
+    expect(Peer.latest.close).toHaveBeenCalled();
+    expect(voice.result.current.state).toBe("idle");
+    expect(voice.result.current.active).toBe(false);
+    voice.close();
     voice.unmount();
   });
 });

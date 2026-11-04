@@ -166,6 +166,7 @@ class BookingRequest(Base):
 
 
 class RequestInbox(Base):
+    id = AutoField()
     message = ForeignKeyField(Message, unique=True, on_delete="CASCADE")
     conversation = ForeignKeyField(Conversation, on_delete="CASCADE")
     state = CharField(default="pending", index=True)

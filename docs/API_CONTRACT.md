@@ -24,6 +24,8 @@ to the browser.
 - `POST /api/voice/sessions/{id}/playback-finished`: `{request_id:UUID}` → `{closed:boolean}`.
   Only the current end request can close the session; stale or cancelled acknowledgments
   do nothing. Like the other voice routes, this is authenticated and owner-scoped.
+  A `closed:true` response means session closure and final captions are persisted.
+  Clients can release media and refresh history without waiting for terminal SSE delivery.
 
 Audio travels on WebRTC media tracks; backend sideband events persist captions
 before publishing them. Normal chat history includes the voice messages with

@@ -8,6 +8,8 @@ All public sync APIs run inside the caller's connection (use database.query).
 import json
 from datetime import datetime
 
+from peewee import JOIN
+
 from app.core.guardrails import require_content, safe_data
 from app.db.image_context import ambiguous_fields, source_images
 from app.db.models import Action, BookingRequest, Message, RequestInbox, Run, db
@@ -73,6 +75,26 @@ def _view(task):
     }
 
 
+def _pending_inbox(run):
+    # A voice delegation can accept several messages with a Run on only the last.
+    # Keep those earlier segments visible, using inbox acceptance time (not the
+    # approximate audio timestamp) to exclude segments accepted after this run.
+    return (
+        RequestInbox.select()
+        .join(Message)
+        .join(Run, JOIN.LEFT_OUTER, on=(Run.message == Message.id))
+        .where(
+            (RequestInbox.conversation == run.conversation_id)
+            & (RequestInbox.state == "pending")
+            & (
+                (Run.revision <= run.revision)
+                | (Run.id.is_null() & (RequestInbox.created_at <= run.created_at))
+            )
+        )
+        .order_by(RequestInbox.id)
+    )
+
+
 def request_context(run_id, limit=20, offset=0):
     """Bounded prompt facts; IDs refer only to this authenticated conversation.
 
@@ -82,18 +104,7 @@ def request_context(run_id, limit=20, offset=0):
     run = Run.get_by_id(run_id)
     limit = max(1, min(limit, 40))
     offset = max(0, int(offset))
-    inbox = list(
-        RequestInbox.select()
-        .join(Message)
-        .join(Run, on=(Run.message == Message.id))
-        .where(
-            (RequestInbox.conversation == run.conversation_id)
-            & (RequestInbox.state == "pending")
-            & (Run.revision <= run.revision)
-        )
-        .order_by(Run.revision)
-        .limit(limit + 1)
-    )
+    inbox = list(_pending_inbox(run).limit(limit + 1))
     tasks = list(
         BookingRequest.select()
         .where(BookingRequest.conversation == run.conversation_id)
@@ -207,17 +218,7 @@ def resolve_requests(run_id, message_id, resolutions):
             if previous["input"] != resolutions:
                 raise RequestConflict("Message already interpreted differently")
             return previous["result"]
-        oldest = (
-            RequestInbox.select()
-            .join(Message)
-            .join(Run, on=(Run.message == Message.id))
-            .where(
-                (RequestInbox.conversation == run.conversation_id)
-                & (RequestInbox.state == "pending")
-            )
-            .order_by(Run.revision)
-            .first()
-        )
+        oldest = _pending_inbox(run).first()
         if oldest is None or oldest.id != inbox.id:
             raise RequestConflict("Resolve older pending messages first")
         result = []

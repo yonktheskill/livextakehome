@@ -435,6 +435,40 @@ async def test_exact_original_cancellation_needs_no_second_permission(account, t
 
 
 @pytest.mark.asyncio
+@pytest.mark.parametrize("reason", [None, "", "   ", "Host unavailable"])
+async def test_host_cancellation_always_supplies_a_nonempty_reason(account, reason):
+    user, vault = account
+    posts = []
+
+    async def handler(request):
+        if request.method == "GET":
+            return httpx.Response(200, json={"status": "success", "data": BOOKING})
+        payload = json.loads(request.content)
+        posts.append(payload)
+        if not payload.get("cancellationReason", "").strip():
+            return httpx.Response(
+                400,
+                json={"status": "error", "error": {"message": "Cancellation reason is required"}},
+            )
+        return httpx.Response(
+            200, json={"status": "success", "data": {**BOOKING, "status": "cancelled"}}
+        )
+
+    executor = Executor(vault, lambda key: CalClient(key, httpx.MockTransport(handler)))
+    run_id = accept(user, "Cancel booking abc", str(uuid4()))["run_id"]
+    start_test_run(run_id)
+    arguments = {"booking_uid": "abc"}
+    if reason is not None:
+        arguments["reason"] = reason
+    result = await executor.execute(run_id, "cancel_booking", arguments)
+    assert result["response"]["status"] == "cancelled"
+    assert len(posts) == 1
+    assert posts[0]["cancellationReason"] == (
+        "Host unavailable" if reason == "Host unavailable" else "User requested cancellation"
+    )
+
+
+@pytest.mark.asyncio
 @pytest.mark.parametrize(
     "text",
     [

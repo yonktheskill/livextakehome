@@ -105,7 +105,12 @@ Say "end call", "hang up" or "goodbye" to end voice. The agent also has an `end_
 tool. Once a booking succeeds and no other requests remain pending, voice finishes
 the confirmation/farewell and closes automatically. Further speech keeps the call
 open. The browser observes remote audio to allow playback to finish; conservative
-timeouts cover blocked playback or lost connections. Backend clarifications and
+timeouts cover blocked playback or lost connections. Explicit spoken hang-up also
+recognizes acknowledgments such as "Okay, nice. End call"; it mutes input immediately
+and releases browser media after the farewell, with a 10-second playback deadline.
+A 15-second backend fallback starts closing the provider session if the browser
+never acknowledges playback. A failed farewell send cannot prevent shutdown.
+Backend clarifications and
 their spoken captions share one reply; exact action-confirmation details appear
 inside that reply when required.
 

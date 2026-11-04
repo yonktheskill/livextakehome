@@ -117,6 +117,11 @@ def test_exact_action_confirmation_is_attached_without_overwriting_evidence(acco
         "Goodbye",
         "I'm done",
         "Thanks, that's all.",
+        "Okay, nice. End call",
+        "All right, great, please end the call now.",
+        "Um, okay, let's end the call.",
+        "You can end the call now, thank you.",
+        "Can we end this call please?",
     ],
 )
 def test_direct_hangup_intent(text):
@@ -132,6 +137,10 @@ def test_direct_hangup_intent(text):
         "Book tomorrow",
         "End the call after you book my meeting",
         "Bye for now is the title",
+        "Okay, nice. Don't end the call",
+        "Okay, nice. End call is the title of my meeting",
+        'The attendee said "end call"',
+        "Okay, end the call after you cancel Alice's meeting",
     ],
 )
 def test_hangup_phrases_inside_scheduling_or_negated_requests_do_not_disconnect(text):
@@ -300,4 +309,115 @@ async def test_direct_end_request_needs_no_scheduling_run_or_booking(account):
     finally:
         connection.end_task.cancel()
         await asyncio.gather(connection.end_task, return_exceptions=True)
+        await manager.http.aclose()
+
+
+@pytest.mark.asyncio
+async def test_recorded_hangup_phrase_closes_the_sideband_without_model_delegation(
+    account, monkeypatch
+):
+    user, _ = account
+    call = session(user)
+    farewell = asyncio.Event()
+    sent = []
+
+    class Socket:
+        def __init__(self):
+            self.queue = asyncio.Queue()
+
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, *args):
+            pass
+
+        def __aiter__(self):
+            return self
+
+        async def __anext__(self):
+            return await self.queue.get()
+
+        async def recv(self):
+            return await self.queue.get()
+
+        async def send(self, raw):
+            event = json.loads(raw)
+            sent.append(event["type"])
+            if event["type"] == "session.commentary.append":
+                farewell.set()
+            elif event["type"] == "session.close":
+                await self.queue.put(json.dumps({"type": "session.closed"}))
+
+    socket = Socket()
+    monkeypatch.setattr("websockets.asyncio.client.connect", lambda *args, **kwargs: socket)
+    manager = VoiceManager(Settings(voice_api_key="offline-key"))
+    connection = VoiceConnection(manager, call.id)
+    manager.connections[call.id] = connection
+    connection.task = asyncio.create_task(connection.run("offline-session"))
+    try:
+        await asyncio.wait_for(connection.ready.wait(), 2)
+        await socket.queue.put(
+            json.dumps(transcript("hangup", "Okay, nice. End call", 159200, 160800))
+        )
+        await asyncio.wait_for(farewell.wait(), 2)
+        assert connection.end_request
+        assert not Run.select().exists()
+        event = VoiceEvent.get(
+            VoiceEvent.session == call.id, VoiceEvent.kind == "voice.end_requested"
+        )
+        assert json.loads(event.payload)["reason"] == "user_requested"
+        assert await asyncio.wait_for(manager.playback_finished(call.id, connection.end_request), 2)
+        assert connection.closed.is_set()
+        assert VoiceSession.get_by_id(call.id).status == "closed"
+        assert "session.input_audio.mute" in sent
+        assert "session.close" in sent
+        assert call.id not in manager.connections
+        assert not Action.select().exists()
+    finally:
+        await manager.aclose()
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("fail_mute", [True, False])
+async def test_failed_farewell_send_still_publishes_hangup_and_arms_timeout(account, fail_mute):
+    user, _ = account
+    call = session(user)
+    manager = VoiceManager(Settings())
+    connection = VoiceConnection(manager, call.id)
+    connection.send = AsyncMock(
+        side_effect=[RuntimeError("unavailable")]
+        if fail_mute
+        else [None, RuntimeError("unavailable")]
+    )
+    try:
+        await connection.request_end("user_requested")
+        event = VoiceEvent.get(
+            VoiceEvent.session == call.id, VoiceEvent.kind == "voice.end_requested"
+        )
+        assert json.loads(event.payload)["request_id"] == connection.end_request
+        assert connection.end_task and not connection.end_task.done()
+        assert VoiceEvent.select().where(VoiceEvent.kind == "voice.notice").exists()
+    finally:
+        connection.end_task.cancel()
+        await asyncio.gather(connection.end_task, return_exceptions=True)
+        await manager.http.aclose()
+
+
+@pytest.mark.asyncio
+async def test_explicit_hangup_has_a_short_server_deadline_without_browser_ack(
+    account, monkeypatch
+):
+    user, _ = account
+    call = session(user)
+    manager = VoiceManager(Settings())
+    connection = VoiceConnection(manager, call.id)
+    connection.end_request, connection.end_reason = "hangup", "user_requested"
+    manager.stop = AsyncMock()
+    sleep = AsyncMock()
+    monkeypatch.setattr("app.providers.voice.asyncio.sleep", sleep)
+    try:
+        await connection.end_timeout("hangup")
+        sleep.assert_awaited_once_with(15)
+        manager.stop.assert_awaited_once_with(call.id)
+    finally:
         await manager.http.aclose()

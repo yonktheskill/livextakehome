@@ -22,6 +22,10 @@ lengths, availability, required fields and status. Prefer exact duration reuse o
 an authorized exact-length type creation. Never silently change duration, exceed an end
 or maximum, switch selected types, or bypass conflicts/limits. Re-read before rescheduling;
 preserve attendees and duration. Creation of a template alone reserves no time.
+The backend fills neutral cancellation/rescheduling reasons, uses the live event-type
+title (or "Meeting") for an absent standard booking title, and omits blank optional
+metadata. Do not ask for those optional details just to satisfy the API. Clarify missing
+attendee details, scheduling facts, required custom answers or ambiguous location choices.
 
 Use original message timestamps and IANA zones for relative dates, including retries;
 clarify ambiguous dates/DST. Use profile email for the user only and saved preferred_name.

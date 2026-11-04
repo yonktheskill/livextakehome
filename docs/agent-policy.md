@@ -7,6 +7,27 @@ specific action. Reusable template creation during booking needs permission unle
 was already authorized. Ownership, live availability, exact configuration, credentials,
 Stop and unknown-write recovery remain enforced in Python.
 
+## API defaults
+
+Apply defaults to descriptive metadata before dispatch, preserving supplied nonempty
+values. Cancellation and rescheduling use neutral "User requested cancellation" and
+"User requested rescheduling" reasons when omitted, null or blank. These equivalent
+empty reason forms normalize identically for exact authorization and deduplication.
+A missing standard booking title uses the live event-type title, falling back to
+"Meeting". The effective booking title is included in validation evidence.
+
+Omit blank optional booking answers, empty guest lists, phone numbers and reusable-type
+descriptions. Keep valid `false` and `0` answers. A sole configured host location can
+satisfy a required location field; multiple choices and attendee-defined locations
+require resolution. Live configuration still supplies durations, schedules and
+conferencing defaults under the existing policy.
+
+Missing identities, emails, dates, time zones, exact requested durations, resource IDs
+and required custom answers are never filled with invented values. The agent clarifies
+uncertainty before dispatch. Do not request optional metadata merely to satisfy the API,
+or retry unknown writes with different defaults. These rules cover the supported tools;
+they cannot remove availability, permission, account-configuration or provider failures.
+
 ## Independent work and corrections
 
 Every original message enters a durable inbox. The ordinary model resolves messages
@@ -14,6 +35,10 @@ oldest first using `resolve_requests`, with explicit request IDs and revisions. 
 add independent requests, partially amend a unique request, hold ambiguous requests for
 clarification, withdraw a request, explicitly resume blocked work, or dismiss a message
 that adds no booking task. This is semantic interpretation, not a keyword classifier.
+Voice turns can contain several accepted transcript segments sharing one agent run.
+Every accepted segment is exposed and resolved in inbox order, including segments
+without their own run. Audio timestamps do not determine that order. Unaccepted
+partial, late or interrupted captions remain outside the actionable inbox.
 
 A new message pauses stale execution without deleting independent work. Multiple clear
 booking requests remain pending until each is completed or withdrawn. A correction

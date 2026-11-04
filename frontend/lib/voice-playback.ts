@@ -31,13 +31,18 @@ export function monitorVoiceAudio(stream: MediaStream) {
 export class VoicePlaybackDrain {
   private heardAudio = false;
   private lastActivity: number;
-  constructor(private started: number) {
+  constructor(
+    private started: number,
+    private maximumWait?: number,
+  ) {
     this.lastActivity = started;
   }
   caption(now: number) {
     this.lastActivity = now;
   }
   ready(now: number, audible: boolean | undefined) {
+    // Explicit hang-up must finish even with unavailable monitoring or persistent noise.
+    if (this.maximumWait !== undefined && now - this.started >= this.maximumWait) return true;
     if (audible) {
       this.heardAudio = true;
       this.lastActivity = now;

@@ -15,6 +15,8 @@ from pydantic import (
     model_validator,
 )
 
+from app.tools.defaults import optional_text
+
 DURATION_DESCRIPTION = (
     "Exact duration currently agreed with the user; do not change without authorization."
 )
@@ -97,6 +99,13 @@ class Attendee(Arguments):
     email: EmailStr
     time_zone: str
 
+    @field_validator("name")
+    @classmethod
+    def nonblank_name(cls, value):
+        if not value.strip():
+            raise ValueError("Provide the attendee's name")
+        return value
+
     @field_validator("time_zone")
     @classmethod
     def zone(cls, value):
@@ -109,7 +118,8 @@ class Attendee(Arguments):
 
 AnswerText = Annotated[StrictStr, Field(max_length=4000)]
 BookingAnswer = (
-    AnswerText
+    None
+    | AnswerText
     | StrictBool
     | Annotated[StrictInt, Field(ge=-1e15, le=1e15)]
     | Annotated[StrictFloat, Field(allow_inf_nan=False, ge=-1e15, le=1e15)]
@@ -141,7 +151,21 @@ class CreateBooking(EventType, WriteArguments):
         return Range.aware(value) if value is not None else None
 
 
-class Reschedule(Booking, WriteArguments):
+class ReasonArguments(WriteArguments):
+    reason: str | None = Field(
+        default="",
+        max_length=500,
+        description="Optional user-supplied reason. The backend uses a neutral "
+        "user-requested action reason when omitted, null or blank.",
+    )
+
+    @field_validator("reason", mode="before")
+    @classmethod
+    def normalize_reason(cls, value):
+        return optional_text(value)
+
+
+class Reschedule(Booking, ReasonArguments):
     new_start: datetime
 
     @field_validator("new_start")
@@ -150,8 +174,8 @@ class Reschedule(Booking, WriteArguments):
         return Range.aware(value)
 
 
-class Cancel(Booking, WriteArguments):
-    reason: str = Field(default="", max_length=500)
+class Cancel(Booking, ReasonArguments):
+    pass
 
 
 class CreateType(WriteArguments):
@@ -163,7 +187,19 @@ class CreateType(WriteArguments):
         le=1440,
         description="Original booking duration when creating a missing type.",
     )
-    description: str = Field(default="", max_length=1000)
+    description: str | None = Field(default="", max_length=1000)
+
+    @field_validator("title")
+    @classmethod
+    def nonblank_title(cls, value):
+        if not value.strip():
+            raise ValueError("Provide a reusable event-type title")
+        return value
+
+    @field_validator("description", mode="before")
+    @classmethod
+    def normalize_description(cls, value):
+        return optional_text(value)
 
 
 SCHEMAS: dict[str, type[Arguments]] = {
@@ -203,7 +239,9 @@ DESCRIPTIONS = {
     "type still needs creation permission. Never silently round up.",
     "create_booking": "Book after live ownership, configuration, fields and availability "
     "validation. Provide the exact user-authorized duration and attendee details. Lookup "
-    "sequence and use of the duration helper are optional. request_id associates a write "
+    "sequence and use of the duration helper are optional. Blank optional answers are "
+    "omitted. Missing standard booking title uses the event type title or Meeting. "
+    "Required custom answers still need clarification. request_id associates a write "
     "with its durable user request when available; it is never sent to Cal.com.",
     "reschedule_booking": "Move exact booking preserving duration; validate live slots first.",
 }

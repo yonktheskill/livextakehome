@@ -7,6 +7,7 @@ from datetime import UTC, datetime, timedelta
 from pydantic import AnyHttpUrl, EmailStr, TypeAdapter, ValidationError
 
 from app.calcom.client import CalError, owned_booking, owned_type
+from app.tools.defaults import action_reason, blank, booking_title, sole_location
 from app.tools.durations import duration, duration_plan
 
 
@@ -95,21 +96,30 @@ def booking_answers(event_type, args):
         definitions[slug] = field
     answers = dict(args.booking_fields)
     standard = {"name": args.attendee.name, "email": str(args.attendee.email)}
-    if args.location:
+    if not blank(args.location):
         standard["location"] = args.location
+    elif configured := sole_location(event_type.get("locations", [])):
+        standard["location"] = configured
+    title_field = definitions.get("title", {})
+    if title_field.get("type", title_field.get("field")) in {"title", "text", "textarea"} and blank(
+        answers.get("title")
+    ):
+        answers["title"] = booking_title(event_type)
     for slug, value in answers.items():
         if slug not in definitions:
             raise CalError(f"Unknown booking field: {slug}; use the live definitions.")
-        if slug in standard and value != standard[slug]:
+        if slug in standard and not blank(value) and value != standard[slug]:
             raise CalError(f"Booking field {slug} conflicts with the attendee.")
     for slug, field in definitions.items():
         value = standard.get(slug, answers.get(slug))
-        empty = value is None or value == [] or (isinstance(value, str) and not value.strip())
-        if field.get("required") and empty:
-            raise CalError(f"Missing nonempty required booking field: {slug}")
-        if value is None:
+        if blank(value):
+            if field.get("required"):
+                raise CalError(f"Missing nonempty required booking field: {slug}")
+            answers.pop(slug, None)
             continue
         kind = field.get("type", field.get("field"))
+        if slug == "attendeePhoneNumber" and kind == "attendeePhoneNumber":
+            kind = "phone"
         valid = False
         if kind in {
             "text",
@@ -131,7 +141,7 @@ def booking_answers(event_type, args):
             valid = type(value) in {int, float}
         elif kind == "system" and slug in standard:
             valid = True
-        if slug == "location" and value == args.location:
+        if slug == "location" and value == standard.get("location"):
             valid = True
         if slug in {"notes", "title", "rescheduleReason"}:
             valid = isinstance(value, str) and bool(value.strip())
@@ -185,13 +195,14 @@ async def prepare(client, name, args, owner):
             "title": args.title,
             "slug": f"{slug[:70]}-{uuid.uuid4().hex[:8]}",
             "lengthInMinutes": args.duration_minutes,
-            "description": args.description,
             "scheduleId": defaults[0]["id"],
             "locations": [location],
             "minimumBookingNotice": 60,
             "beforeEventBuffer": 0,
             "afterEventBuffer": 0,
         }
+        if not blank(args.description):
+            payload["description"] = args.description
         return (
             "/v2/event-types",
             payload,
@@ -212,15 +223,22 @@ async def prepare(client, name, args, owner):
         if args.explicit_end and args.start + timedelta(minutes=minutes) > args.explicit_end:
             raise CalError("Effective duration would exceed the explicit end; please clarify.")
         answers, phone, guests = booking_answers(event_type, args)
+        requested_location = None if blank(args.location) else args.location
         locations = event_type.get("locations", [])
-        if len(locations) > 1 and not args.location:
+        if len(locations) > 1 and not requested_location:
             raise CalError("Choose a location from this event type first.")
+        if (
+            not requested_location
+            and len(locations) == 1
+            and locations[0].get("type") in {"attendeeAddress", "attendeePhone", "attendeeDefined"}
+        ):
+            raise CalError("Attendee-defined locations require booking through Cal.com.")
         selected_location = None
-        if args.location:
+        if requested_location:
             candidates = [
                 x
                 for x in locations
-                if args.location
+                if requested_location
                 in {
                     x.get("type"),
                     x.get("integration"),
@@ -235,6 +253,7 @@ async def prepare(client, name, args, owner):
                 k: v
                 for k, v in candidates[0].items()
                 if k in {"type", "integration", "address", "link", "phone", "public"}
+                and not blank(v)
             }
             if selected_location.get("type") in {
                 "attendeeAddress",
@@ -242,6 +261,8 @@ async def prepare(client, name, args, owner):
                 "attendeeDefined",
             }:
                 raise CalError("Attendee-defined locations require booking through Cal.com.")
+            if not sole_location([selected_location]):
+                raise CalError("This location is incomplete or unsupported; resolve it in Cal.com.")
         available = await slots(
             client, args.event_type_id, args.start, args.start + timedelta(days=1), minutes
         )
@@ -264,7 +285,7 @@ async def prepare(client, name, args, owner):
             payload["attendee"]["phoneNumber"] = phone
         if answers:
             payload["bookingFieldsResponses"] = answers
-        if args.location:
+        if requested_location:
             payload["location"] = selected_location
         return (
             "/v2/bookings",
@@ -273,6 +294,7 @@ async def prepare(client, name, args, owner):
                 "effective_duration_minutes": minutes,
                 "requested_duration_minutes": args.duration_minutes,
                 "start": iso(args.start),
+                **({"booking_title": answers["title"]} if "title" in answers else {}),
             },
         )
     booking = await get_booking(
@@ -286,7 +308,7 @@ async def prepare(client, name, args, owner):
         details.update(cancellation_scope="whole_booking", seats=booking.get("seats"))
         return (
             f"/v2/bookings/{args.booking_uid}/cancel",
-            {"cancellationReason": args.reason},
+            {"cancellationReason": action_reason(name, args.reason)},
             details,
         )
     start = datetime.fromisoformat(booking["start"].replace("Z", "+00:00"))
@@ -306,4 +328,8 @@ async def prepare(client, name, args, owner):
     )
     if not slot_exists(available, args.new_start):
         raise CalError("New time is unavailable for the existing duration.")
-    return f"/v2/bookings/{args.booking_uid}/reschedule", {"start": iso(args.new_start)}, details
+    return (
+        f"/v2/bookings/{args.booking_uid}/reschedule",
+        {"start": iso(args.new_start), "reschedulingReason": action_reason(name, args.reason)},
+        details,
+    )

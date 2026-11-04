@@ -136,8 +136,9 @@ export function useVoice(
         if (event.type === "voice.end_requested" && typeof event.data.request_id === "string") {
           if (resources.ending) clearInterval(resources.ending.timer);
           const id = event.data.request_id;
-          const drain = new VoicePlaybackDrain(performance.now());
-          if (event.data.reason === "user_requested") {
+          const userRequested = event.data.reason === "user_requested";
+          const drain = new VoicePlaybackDrain(performance.now(), userRequested ? 10000 : undefined);
+          if (userRequested) {
             resources.stream.getAudioTracks().forEach((track) => {
               track.enabled = false;
             });
@@ -148,6 +149,12 @@ export function useVoice(
             const audible = resources.audio.paused ? false : resources.monitor?.sample();
             if (!drain.ready(performance.now(), audible)) return;
             clearInterval(timer);
+            // The caller asked to disconnect. Release media after the farewell even
+            // if the acknowledgment or terminal event is delayed/lost.
+            if (userRequested) {
+              release(resources, false);
+              if (mounted.current) setState("stopping");
+            }
             void api<{ closed: boolean }>(
               `/voice/sessions/${encodeURIComponent(resources.id!)}/playback-finished`,
               {
@@ -156,13 +163,31 @@ export function useVoice(
               },
             )
               .then((result) => {
-                if (!result.closed && current.current === resources && resources.ending?.id === id) {
+                if (current.current !== resources || resources.ending?.id !== id) return;
+                if (result.closed) {
+                  // Closure is persisted before this response. Refresh canonical captions
+                  // instead of depending on a second, possibly interrupted SSE delivery.
+                  release(resources);
+                  current.current = null;
+                  if (mounted.current) {
+                    setHasSession(false);
+                    setState("idle");
+                    setMuted(false);
+                    setPlaybackBlocked(false);
+                  }
+                  void callbacks.current.refreshHistory().catch(report);
+                } else if (userRequested) {
+                  void end();
+                } else {
                   resources.ending = undefined;
                   if (mounted.current) setState("active");
                 }
               })
               .catch((failure) => {
-                if (current.current === resources) report(failure);
+                if (current.current === resources) {
+                  report(failure);
+                  void end();
+                }
               });
           }, 250);
           resources.ending = { id, drain, timer };

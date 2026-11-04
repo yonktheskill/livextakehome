@@ -102,12 +102,14 @@ def finalize_assistant(session_id):
 
 
 def wants_end_call(text):
-    text = re.sub(r"[^\w\s']", " ", text.casefold())
+    text = re.sub(r"[^\w\s']", " ", text.casefold().replace("’", "'"))
     text = " ".join(text.split()).strip()
     return bool(
         re.fullmatch(
-            r"(?:(?:ok(?:ay)?|yes|thanks|thank you)\s+)*"
-            r"(?:(?:can|could|would)\s+you\s+)?(?:please\s+)?"
+            r"(?:(?:ok(?:ay)?|alright|all right|yes|nice|great|cool|perfect|"
+            r"thanks|thank you|um|uh|well|then)\s+)*"
+            r"(?:(?:can|could|would)\s+(?:you|we)\s+|you\s+can\s+|"
+            r"let(?:'s| us)\s+)?(?:please\s+)?"
             r"(?:(?:end|stop|close|disconnect)(?:\s+(?:the|this|our))?\s+"
             r"(?:call|conversation|voice(?:\s+(?:call|chat))?)|hang\s+up|"
             r"(?:good\s*)?bye|that(?:'s| is)\s+all|(?:i'm|i am|we're|we are)\s+done)"
