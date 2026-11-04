@@ -3,6 +3,7 @@
 import { useMemo, useRef, useState } from "react";
 import { ChevronDown, Search } from "lucide-react";
 import { ApiError } from "../lib/api";
+import { timezoneOptions, timezoneSearch, utcOffset, offsetLabel } from "../lib/timezone";
 import {
   DropdownMenu,
   DropdownMenuTrigger,
@@ -25,13 +26,13 @@ export function TimezonePicker({
   const [search, setSearch] = useState("");
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState("");
+  const [referenceDate, setReferenceDate] = useState(() => new Date());
   const options = useRef<HTMLDivElement>(null);
-  const timeZones = useMemo(
-    () => [...new Set(["UTC", value, ...Intl.supportedValuesOf("timeZone")])].sort(),
-    [value],
-  );
-  const query = search.trim().toLowerCase().replaceAll("_", " ");
-  const filtered = timeZones.filter((zone) => zone.toLowerCase().replaceAll("_", " ").includes(query));
+  const timeZones = useMemo(() => timezoneOptions(value, referenceDate), [value, referenceDate]);
+  const currentOffset = utcOffset(value, referenceDate);
+  const selectedOffset = currentOffset === null ? value : offsetLabel(currentOffset);
+  const query = timezoneSearch(search);
+  const filtered = timeZones.filter((zone) => zone.searchText.includes(query));
 
   async function select(timeZone: string) {
     if (busy) return;
@@ -56,13 +57,14 @@ export function TimezonePicker({
         if (busy) return;
         setOpen(next);
         if (next) {
+          setReferenceDate(new Date());
           setSearch("");
           setError("");
         }
       }}
     >
       <DropdownMenuTrigger className="timezone" aria-label={`Change timezone, currently ${value}`}>
-        <span>{value}</span>
+        <span>{selectedOffset}</span>
         <ChevronDown size={14} aria-hidden="true" />
       </DropdownMenuTrigger>
       <DropdownMenuContent
@@ -77,7 +79,7 @@ export function TimezonePicker({
           <input
             autoFocus
             aria-label="Search timezones"
-            placeholder="Search city or timezone…"
+            placeholder="Search UTC offset or place…"
             value={search}
             disabled={busy}
             onChange={(e) => setSearch(e.target.value)}
@@ -94,7 +96,7 @@ export function TimezonePicker({
                 item?.focus();
               } else if (e.key === "Enter" && filtered.length === 1) {
                 e.preventDefault();
-                void select(filtered[0]);
+                void select(filtered[0].timeZone);
               }
             }}
           />
@@ -103,18 +105,22 @@ export function TimezonePicker({
           ref={options}
           className="timezone-options"
           aria-label="Timezones"
-          value={value}
-          onValueChange={(zone) => void select(zone)}
+          value={selectedOffset}
+          onValueChange={(offset) => {
+            const zone = timeZones.find((option) => option.offsetLabel === offset);
+            if (zone) void select(zone.timeZone);
+          }}
         >
           {filtered.map((zone) => (
             <DropdownMenuRadioItem
-              key={zone}
-              value={zone}
+              key={zone.offsetLabel}
+              value={zone.offsetLabel}
               disabled={busy}
               onSelect={(e) => e.preventDefault()}
               onFocus={(e) => e.currentTarget.scrollIntoView({ block: "nearest" })}
             >
-              {zone}
+              <span className="timezone-option-offset">{zone.offsetLabel}</span>
+              <span className="timezone-option-places">{zone.places.join(", ")}</span>
             </DropdownMenuRadioItem>
           ))}
         </DropdownMenuRadioGroup>

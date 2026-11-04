@@ -472,7 +472,17 @@ label {
   display: block;
 }
 .timezone-menu {
-  width: min(320px, calc(100vw - 24px));
+  width: min(380px, calc(100vw - 24px));
+}
+.timezone-option-offset {
+  display: block;
+  font-weight: 500;
+  font-variant-numeric: tabular-nums;
+}
+.timezone-option-places {
+  display: block;
+  color: var(--muted);
+  font-size: 12px;
 }
 .timezone-search {
   display: flex;
