@@ -228,7 +228,7 @@ describe("chat composer controls", () => {
     expect(button).toBeEnabled();
   });
 
-  it("sends a correction by pointer while keeping Stop visible", async () => {
+  it("replaces Stop with steering for a draft and restores Stop after submission", async () => {
     const posts: string[] = [];
     vi.stubGlobal(
       "fetch",
@@ -249,9 +249,14 @@ describe("chat composer controls", () => {
     fireEvent.click(screen.getByRole("button", { name: "Send message" }));
     await screen.findByRole("button", { name: "Stop response" });
     fireEvent.change(input, { target: { value: "Use tomorrow instead" } });
-    expect(screen.getByRole("button", { name: "Stop response" })).toBeVisible();
-    fireEvent.click(screen.getByRole("button", { name: "Send message" }));
+    expect(screen.queryByRole("button", { name: "Stop response" })).not.toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "Send message" })).not.toBeInTheDocument();
+    const steer = screen.getByRole("button", { name: "Steer response" });
+    expect(steer).toHaveClass("steer-button");
+    fireEvent.click(steer);
     await waitFor(() => expect(posts).toEqual(["Book a meeting", "Use tomorrow instead"]));
+    expect(await screen.findByRole("button", { name: "Stop response" })).toBeVisible();
+    expect(screen.queryByRole("button", { name: "Steer response" })).not.toBeInTheDocument();
     unmount();
   });
 
@@ -288,8 +293,10 @@ describe("chat composer controls", () => {
     expect(stop.closest("form")).toBe(input.closest("form"));
     expect(stop).toBeEnabled();
     fireEvent.change(input, { target: { value: "Keep this draft" } });
-    expect(screen.getByRole("button", { name: "Send message" })).toBeEnabled();
-    fireEvent.click(stop);
+    expect(screen.getByRole("button", { name: "Steer response" })).toBeEnabled();
+    fireEvent.change(input, { target: { value: "   " } });
+    fireEvent.click(screen.getByRole("button", { name: "Stop response" }));
+    fireEvent.change(input, { target: { value: "Keep this draft" } });
     expect(await screen.findByRole("button", { name: "Stopping response" })).toBeDisabled();
     expect(fetcher.mock.calls.filter(([url]) => url === "/api/chat/messages")).toHaveLength(1);
     expect(fetcher).toHaveBeenCalledWith("/api/runs/run-1/stop", expect.objectContaining({ method: "POST" }));
@@ -297,8 +304,8 @@ describe("chat composer controls", () => {
     await act(async () => {
       confirmStop(json({ status: "running", dispatch_committed: false }));
     });
-    // Stop stays in place until the stream confirms the run has ended.
-    expect(screen.getByRole("button", { name: "Stop response" })).toBeInTheDocument();
+    // The run stays active until the stream confirms it has ended.
+    expect(screen.getByRole("button", { name: "Steer response" })).toBeInTheDocument();
     await act(async () => {
       events.enqueue(new TextEncoder().encode("id: 1\nevent: run.interrupted\ndata: {}\n\n"));
     });

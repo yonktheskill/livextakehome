@@ -140,7 +140,7 @@ describe("optimistic chat delivery", () => {
     await act(async () => {
       retryRespond(json({ run_id: "r", message_id: "u", revision: 1 }));
     });
-    await screen.findByRole("button", { name: "Stop response" });
+    await screen.findByRole("button", { name: "Steer response" });
     expect(screen.getAllByText("Book a meeting")).toHaveLength(1);
     expect(screen.queryByText("Delivery unconfirmed")).not.toBeInTheDocument();
     expect(input).toHaveValue("New draft while retrying");

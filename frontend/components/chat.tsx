@@ -116,6 +116,8 @@ export function Chat({ user }: { user: User }) {
   const imagesBusy = images.some((image) => image.status !== "ready");
   const draftLength = Array.from(draft).length;
   const tooLong = draftLength > MAX_MESSAGE_CHARACTERS;
+  const hasDraft = !!draft.trim() || !!images.length;
+  const showStop = !!chat.run && (!hasDraft || chat.stopping);
   const [accountError, setAccountError] = useState("");
   const [loggingOut, setLoggingOut] = useState(false);
   const input = useRef<HTMLTextAreaElement>(null);
@@ -160,6 +162,7 @@ export function Chat({ user }: { user: User }) {
       imagesBusy ||
       chat.pending ||
       chat.sending ||
+      chat.stopping ||
       chat.loading
     )
       return;
@@ -463,7 +466,7 @@ export function Chat({ user }: { user: User }) {
                 >
                   <Paperclip size={20} />
                 </Button>
-                {chat.run ? (
+                {showStop ? (
                   <Button
                     aria-label={chat.stopping ? "Stopping response" : "Stop response"}
                     title={chat.stopping ? "Stopping…" : "Stop response"}
@@ -478,11 +481,11 @@ export function Chat({ user }: { user: User }) {
                       <Square size={17} fill="currentColor" />
                     )}
                   </Button>
-                ) : null}
-                {(!chat.run || !!draft.trim() || !!images.length) && (
+                ) : (
                   <Button
-                    aria-label="Send message"
-                    className="send-button"
+                    aria-label={chat.run ? "Steer response" : "Send message"}
+                    title={chat.run ? "Steer response" : "Send message"}
+                    className={`send-button${chat.run ? " steer-button" : ""}`}
                     type="submit"
                     disabled={
                       tooLong ||
