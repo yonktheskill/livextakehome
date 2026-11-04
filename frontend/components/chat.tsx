@@ -56,10 +56,11 @@ export function Chat({ user }: { user: User }) {
     if (nearBottom.current) scrollToBottom("instant");
   }, [chat.messages, chat.status, chat.receipts, scrollToBottom]);
   async function submit() {
-    if (!draft.trim() || chat.pending) return;
+    if (!draft.trim() || chat.pending || chat.sending || chat.loading) return;
     const sent = draft;
     nearBottom.current = true;
-    if (await chat.submit(sent)) setDraft((current) => (current === sent ? "" : current));
+    setDraft("");
+    if (!(await chat.submit(sent))) setDraft((current) => current || sent);
     input.current?.focus();
   }
   async function signOut() {
@@ -148,6 +149,8 @@ export function Chat({ user }: { user: User }) {
                         <div className="message-label">
                           {message.role === "user" ? "You" : "HelpBook"}
                           <span>{messageTime(message.created_at, user.time_zone)}</span>
+                          {message.status === "sending" && <span>Sending…</span>}
+                          {message.status === "unconfirmed" && <span>Delivery unconfirmed</span>}
                         </div>
                         <SafeMarkdown content={message.content} />
                         <MessageCopy content={message.content} />
@@ -182,7 +185,9 @@ export function Chat({ user }: { user: User }) {
                   className="text-button"
                   disabled={chat.sending}
                   onClick={async () => {
-                    if (await chat.submit("", true)) setDraft("");
+                    const content = chat.pending?.content;
+                    if (await chat.submit("", true))
+                      setDraft((current) => (current.trim() === content ? "" : current));
                   }}
                 >
                   Retry message

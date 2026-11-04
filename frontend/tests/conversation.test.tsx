@@ -73,11 +73,63 @@ describe("conversation delivery and recovery", () => {
       await result.current.submit("Book a meeting");
     });
     expect(result.current.pending).not.toBeNull();
+    expect(result.current.messages).toEqual([
+      expect.objectContaining({ content: "Book a meeting", status: "unconfirmed" }),
+    ]);
     await act(async () => {
       await result.current.submit("", true);
     });
+    expect(result.current.messages).toEqual([
+      expect.objectContaining({ id: "u", content: "Book a meeting", status: "sent" }),
+    ]);
     expect(submissions).toHaveLength(2);
     expect(submissions[0]).toBe(submissions[1]);
+    unmount();
+  });
+  it("keeps an optimistic correction visible when the previous run refreshes history", async () => {
+    let events!: ReadableStreamDefaultController<Uint8Array>;
+    let accept!: (response: Response) => void;
+    const response = new Promise<Response>((resolve) => {
+      accept = resolve;
+    });
+    let historyReads = 0;
+    const fetcher = vi.fn(async (url: string) => {
+      if (url.includes("history")) {
+        historyReads++;
+        return json({ messages: [], next_cursor: null });
+      }
+      if (url === "/api/chat/messages") return response;
+      return new Response(
+        new ReadableStream<Uint8Array>({
+          start(controller) {
+            events = controller;
+          },
+        }),
+      );
+    });
+    sessionStorage.setItem("daylight-run:1", "previous");
+    vi.stubGlobal("fetch", fetcher);
+    const { result, unmount } = renderHook(() => useConversation(1, authorized));
+    await waitFor(() => expect(result.current.loading).toBe(false));
+    let submission!: Promise<boolean>;
+    act(() => {
+      submission = result.current.submit("Use a later time");
+    });
+    const optimisticId = result.current.messages[0].id;
+    await act(async () => {
+      events.enqueue(new TextEncoder().encode("id: 1\nevent: run.completed\ndata: {}\n\n"));
+    });
+    await waitFor(() => expect(historyReads).toBe(2));
+    expect(result.current.messages).toEqual([
+      expect.objectContaining({ id: optimisticId, content: "Use a later time", status: "sending" }),
+    ]);
+    await act(async () => {
+      accept(json({ run_id: "next", message_id: "correction", revision: 2 }));
+      await submission;
+    });
+    expect(result.current.messages).toEqual([
+      expect.objectContaining({ id: "correction", content: "Use a later time", status: "sent" }),
+    ]);
     unmount();
   });
   it("resumes a remembered run without posting a message", async () => {

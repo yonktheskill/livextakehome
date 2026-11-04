@@ -1,5 +1,5 @@
 "use client";
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { api, ApiError, type History, type Message } from "./api";
 import { SSEParser, terminalEvents, type StreamEvent } from "./sse";
 export type Receipt = { action_id: string; kind: string; summary: string; details: unknown };
@@ -17,6 +17,12 @@ export function useConversation(userId: string | number, onUnauthorized: () => v
   const [sending, setSending] = useState(false);
   const [stopping, setStopping] = useState(false);
   const [pending, setPending] = useState<Submission | null>(null);
+  const [optimisticMessage, setOptimisticMessage] = useState<Message | null>(null);
+  // Keep unconfirmed delivery visible even when an active run refreshes history.
+  const visibleMessages = useMemo(
+    () => (optimisticMessage ? [...messages, optimisticMessage] : messages),
+    [messages, optimisticMessage],
+  );
   const controller = useRef<AbortController | null>(null);
   const sendLock = useRef(false);
   const lastId = useRef(0);
@@ -241,19 +247,28 @@ export function useConversation(userId: string | number, onUnauthorized: () => v
     };
   }, [history, connect, key, report]);
   async function submit(content: string, retry = false) {
-    if (sendLock.current || (!content.trim() && !retry)) return false;
+    if (sendLock.current || loading || (retry ? !pending : !!pending || !content.trim())) return false;
     sendLock.current = true;
     setSending(true);
     setError("");
     const submission =
       retry && pending ? pending : { content: content.trim(), client_request_id: crypto.randomUUID() };
+    const optimistic: Message = {
+      id: `pending:${submission.client_request_id}`,
+      role: "user",
+      content: submission.content,
+      status: "sending",
+      created_at: optimisticMessage?.created_at ?? new Date().toISOString(),
+    };
     setPending(submission);
+    setOptimisticMessage(optimistic);
     try {
       const accepted = await api<Accepted>("/chat/messages", {
         method: "POST",
         body: JSON.stringify(submission),
       });
       setPending(null);
+      setOptimisticMessage(null);
       setMessages((previous) =>
         previous.some((m) => m.id === accepted.message_id)
           ? previous
@@ -264,7 +279,7 @@ export function useConversation(userId: string | number, onUnauthorized: () => v
                 role: "user",
                 content: submission.content,
                 status: "sent",
-                created_at: new Date().toISOString(),
+                created_at: optimistic.created_at,
               },
             ],
       );
@@ -276,7 +291,12 @@ export function useConversation(userId: string | number, onUnauthorized: () => v
       connect(accepted.run_id);
       return true;
     } catch (e) {
-      if (e instanceof ApiError && e.status < 500) setPending(null);
+      if (e instanceof ApiError && e.status < 500) {
+        setPending(null);
+        setOptimisticMessage(null);
+      } else {
+        setOptimisticMessage({ ...optimistic, status: "unconfirmed" });
+      }
       report(e);
       return false;
     } finally {
@@ -305,7 +325,7 @@ export function useConversation(userId: string | number, onUnauthorized: () => v
     }
   }
   return {
-    messages,
+    messages: visibleMessages,
     receipts,
     loading,
     error,
