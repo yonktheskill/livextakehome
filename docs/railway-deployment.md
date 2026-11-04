@@ -31,7 +31,8 @@ Backend settings include `PUBLIC_ORIGIN` equal to the HTTPS production URL,
 `COOKIE_SECURE=true`, `REGISTRATION_ENABLED=false`, `TEST_ACCOUNT_ENABLED=true`,
 `LLM_PROVIDER=codex`, `LLM_MODEL=gpt-6.1-sol`, `LIVEX_CODEX_ENABLED=true`, and
 `LIVEX_CODEX_AUTH_HOME=/app/data/codex`. The shared demo login is
-`test@testingmail.com` / `testtesttest`. It starts without a Cal.com connection;
+`test@testingmail.com` / `testtesttest`; a second independent account is
+`test2@testingmail.com` / `testtesttest2`. Each starts without a Cal.com connection;
 connect a dedicated test Cal.com account through the app's connection settings.
 
 Provision the dedicated account login privately after the first backend deployment,

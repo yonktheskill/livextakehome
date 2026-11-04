@@ -64,12 +64,15 @@ links, and replaces `/register` with a closed-registration message. Existing use
 can still sign in. Set it to `true` to reopen registration. The backend default is
 `true` for compatibility when the variable is omitted.
 
-`TEST_ACCOUNT_ENABLED=true` creates `test@testingmail.com` with password
-`testtesttest` and its conversation at startup, even with registration disabled.
-The password is stored as an Argon2 hash. Restarts preserve the existing account,
-password, and data. This flag defaults to `false` when omitted. Turning it off stops
-provisioning; it does not delete the account. Anyone using these shared credentials
-can access that account's conversation and connected Cal.com account; use demo data
+`TEST_ACCOUNT_ENABLED=true` creates two accounts at startup, even with registration disabled:
+
+- `test@testingmail.com` / `testtesttest`
+- `test2@testingmail.com` / `testtesttest2`
+
+Each account has its own conversation, and passwords are stored as Argon2 hashes.
+Restarts preserve existing accounts, passwords, and data. This flag defaults to
+`false` when omitted. Turning it off stops provisioning; it does not delete accounts.
+Anyone using these shared credentials can access that account's conversation and connected Cal.com account; use demo data
 and a dedicated test Cal.com account.
 
 ## Verification and maintenance

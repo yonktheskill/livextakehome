@@ -8,6 +8,7 @@ from app.db.models import Conversation, Session, User, db
 from app.main import create_app
 
 CREDENTIALS = {"email": "test@testingmail.com", "password": "testtesttest"}
+SECOND_CREDENTIALS = {"email": "test2@testingmail.com", "password": "testtesttest2"}
 
 
 def settings(tmp_path, **flags):
@@ -19,7 +20,8 @@ def settings(tmp_path, **flags):
     )
 
 
-def test_closed_registration_and_seeded_login_survive_restart(tmp_path):
+@pytest.mark.parametrize("credentials", [CREDENTIALS, SECOND_CREDENTIALS])
+def test_closed_registration_and_seeded_login_survive_restart(tmp_path, credentials):
     config = settings(tmp_path, registration_enabled=False, test_account_enabled=True)
     with TestClient(create_app(config)) as client:
         assert client.get("/api/auth/config").json() == {"registration_enabled": False}
@@ -28,28 +30,41 @@ def test_closed_registration_and_seeded_login_survive_restart(tmp_path):
         assert response.json()["detail"] == "New registrations are currently disabled."
         assert "set-cookie" not in response.headers
         with db.connection_context():
-            assert User.select().count() == Conversation.select().count() == 1
+            assert User.select().count() == Conversation.select().count() == 2
             assert Session.select().count() == 0
-            user = User.get()
+            user = User.get(User.email == credentials["email"])
             original_id = user.id
-            assert user.password_hash != CREDENTIALS["password"]
-            assert verify_password(user.password_hash, CREDENTIALS["password"])
-        assert client.post("/api/auth/login", json=CREDENTIALS).status_code == 200
+            assert user.password_hash != credentials["password"]
+            assert verify_password(user.password_hash, credentials["password"])
+        assert client.post("/api/auth/login", json=credentials).status_code == 200
         assert client.get("/api/chat/history").status_code == 200
         # A later password change must not be overwritten by startup seeding.
         with db.connection_context():
-            User.update(password_hash=passwords.hash("changed-password")).execute()
+            User.update(password_hash=passwords.hash("changed-password")).where(
+                User.email == credentials["email"]
+            ).execute()
     with TestClient(create_app(config)) as client:
         with db.connection_context():
-            assert User.select().count() == Conversation.select().count() == 1
-            assert User.get().id == original_id
-        assert client.post("/api/auth/login", json=CREDENTIALS).status_code == 401
+            assert User.select().count() == Conversation.select().count() == 2
+            assert User.get(User.email == credentials["email"]).id == original_id
+        assert client.post("/api/auth/login", json=credentials).status_code == 401
         assert (
             client.post(
-                "/api/auth/login", json={**CREDENTIALS, "password": "changed-password"}
+                "/api/auth/login", json={**credentials, "password": "changed-password"}
             ).status_code
             == 200
         )
+
+
+def test_second_account_is_added_when_first_already_exists(tmp_path):
+    config = settings(tmp_path, registration_enabled=True, test_account_enabled=False)
+    with TestClient(create_app(config)) as client:
+        assert client.post("/api/auth/register", json=CREDENTIALS).status_code == 200
+    config.test_account_enabled = True
+    with TestClient(create_app(config)) as client:
+        assert client.post("/api/auth/login", json=SECOND_CREDENTIALS).status_code == 200
+        with db.connection_context():
+            assert User.select().count() == Conversation.select().count() == 2
 
 
 @pytest.mark.parametrize("enabled", [False, True])
