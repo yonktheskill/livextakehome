@@ -830,6 +830,9 @@ label {
   max-width: var(--chat-column-width);
   margin: auto;
 }
+#message-length {
+  color: var(--muted);
+}
 .composer {
   border: 1px solid var(--selection);
   border-radius: 13px;
