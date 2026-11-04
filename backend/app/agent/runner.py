@@ -162,6 +162,17 @@ class Runner:
             async with asyncio.timeout(self.settings.run_timeout_seconds):
                 # Recheck queued messages accepted before the policy was installed.
                 await query(lambda: require_content(Run.get_by_id(run_id).message.content))
+                from app.agent.vision import EXTRACTION_VERSION, extract
+                from app.db.image_context import cache, pending_images
+
+                state.stage = "vision"
+                for message_id, caption, images in await query(
+                    pending_images, run_id, EXTRACTION_VERSION
+                ):
+                    if not await query(checkpoint, run_id):
+                        raise Interrupted()
+                    value = await extract(self.provider, caption, images)
+                    await query(cache, message_id, EXTRACTION_VERSION, value)
                 await self.loop(run_id, state)
         except ContentRejected as exc:
             await self.record_failure(run_id, exc, state, "content_rejected")
@@ -273,6 +284,10 @@ class Runner:
                 "This was an internal execution problem; no further changes were attempted."
             ),
             "timeout": "The model provider timed out. Please try again.",
+            "unsupported": "The configured provider or model does not support image input.",
+            "invalid_extraction": (
+                "Could not read the image details. Retry or type the meeting details."
+            ),
         }.get(getattr(exc, "code", ""), "Agent failed. Check provider configuration and try again.")
 
     @staticmethod

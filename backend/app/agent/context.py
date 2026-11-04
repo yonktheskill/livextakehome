@@ -14,7 +14,8 @@ from peewee import Case, ColumnBase
 
 from app.core.config import Settings
 from app.core.guardrails import require_content, safe_data, safe_text
-from app.db.models import Action, Confirmation, Message, Run, Snapshot
+from app.db.image_context import source_images
+from app.db.models import Action, Attachment, Confirmation, Message, Run, Snapshot
 from app.db.requests import request_context
 
 PROMPT = Path(__file__).with_name("prompts").joinpath("system.txt").read_text()
@@ -68,6 +69,7 @@ def source(message, *, summary=False):
     checked = safe_text(message.content)
     content = excerpt(checked, 400) if summary else checked
     return {
+        **source_images(message.id),
         "source_id": message.id,
         "created_at": message.created_at,
         "time_zone": message.time_zone,
@@ -157,6 +159,8 @@ def assemble(run_id, settings=None, tools=None):
         "role": "system",
         "content": f"{PROMPT}\nCurrent UTC: {datetime.now(UTC).isoformat()}\n",
     }
+    if Attachment.select().join(Message).where(Message.conversation == conv).exists():
+        system["content"] += Path(__file__).with_name("prompts").joinpath("images.txt").read_text()
     actions = list(
         Action.select().join(Run).where(Run.conversation == conv).order_by(Action.created_at.desc())
     )

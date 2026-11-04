@@ -8,6 +8,7 @@ All public sync APIs run inside the caller's connection (use database.query).
 import json
 
 from app.core.guardrails import require_content, safe_data
+from app.db.image_context import ambiguous_fields, source_images
 from app.db.models import Action, BookingRequest, Message, RequestInbox, Run, db
 
 
@@ -45,6 +46,7 @@ def _view(task):
         "booking_uid": task.booking_uid,
         "origin_message_id": task.origin_message_id,
         "original_user_message": task.origin_message.content,
+        **source_images(task.origin_message_id),
         "last_action_id": task.last_action_id,
     }
 
@@ -86,6 +88,7 @@ def request_context(run_id, limit=20, offset=0):
                 {
                     "message_id": i.message_id,
                     "content": i.message.content,
+                    **source_images(i.message_id),
                     "time_zone": i.message.time_zone,
                 }
                 for i in inbox[:limit]
@@ -123,6 +126,31 @@ def _merge(base, patch):
         else:
             base[key] = value
     return base
+
+
+def _image_clarification(run, origin, blockers, evidence):
+    if not isinstance(evidence, dict):
+        raise RequestConflict("Supply original text evidence for image ambiguity")
+    for field in blockers:
+        item = evidence.get(field, {})
+        if not isinstance(item, dict):
+            raise RequestConflict("Supply field clarification evidence")
+        source = Message.get_or_none(
+            (Message.id == item.get("source_message_id"))
+            & (Message.conversation == run.conversation_id)
+            & (Message.role == "user")
+            & (Message.created_at <= run.message.created_at)
+        )
+        quote = item.get("quote")
+        if (
+            not source
+            or not isinstance(quote, str)
+            or not quote.strip()
+            or quote not in source.content
+        ):
+            raise RequestConflict(
+                "Each ambiguous image field requires exact outer user text evidence"
+            )
 
 
 def resolve_requests(run_id, message_id, resolutions):
@@ -176,10 +204,18 @@ def resolve_requests(run_id, message_id, resolutions):
             if relation == "new":
                 if resolution.get("request_id"):
                     raise RequestConflict("New requests cannot reuse a task ID")
+                blockers = ambiguous_fields(message_id)
+                if blockers and resolution.get("clarification_evidence"):
+                    _image_clarification(
+                        run, message_id, blockers, resolution["clarification_evidence"]
+                    )
+                    facts = {**facts, "_image_ambiguity_resolved": True}
+                    blockers = []
                 task = BookingRequest.create(
                     conversation=run.conversation_id,
                     origin_message=message_id,
                     facts=json.dumps(facts, sort_keys=True),
+                    state="held" if blockers else "pending",
                 )
             elif relation == "dismiss":
                 if resolution.get("request_id") or facts:
@@ -199,6 +235,18 @@ def resolve_requests(run_id, message_id, resolutions):
                         raise RequestConflict("Explicit resume required for blocked request")
                 if relation != "amend" and facts:
                     raise RequestConflict("Only amendments may change existing facts")
+                if relation in {"amend", "resume"}:
+                    blockers = ambiguous_fields(task.origin_message_id)
+                    if blockers and not json.loads(task.facts).get("_image_ambiguity_resolved"):
+                        _image_clarification(
+                            run,
+                            task.origin_message_id,
+                            blockers,
+                            resolution.get("clarification_evidence", {}),
+                        )
+                        task.facts = json.dumps(
+                            {**json.loads(task.facts), "_image_ambiguity_resolved": True}
+                        )
                 _invalidate(task)
                 task.revision += 1
                 if relation == "amend":
@@ -382,6 +430,12 @@ def request_tool_definitions():
                                     "request_id": {"type": "string"},
                                     "expected_revision": {"type": "integer", "minimum": 1},
                                     "facts": {"type": "object"},
+                                    "clarification_evidence": {
+                                        "type": "object",
+                                        "description": "Map each ambiguous field to "
+                                        "{source_message_id,quote}: exact original outer user text "
+                                        "resolving it. Never quote image observations.",
+                                    },
                                     "reason": {"type": "string"},
                                 },
                                 "required": ["relation", "reason"],
@@ -429,6 +483,7 @@ def _validate_resolutions(resolutions):
             "reason",
             "request_id",
             "expected_revision",
+            "clarification_evidence",
             "facts",
         }:
             raise RequestConflict("Resolution contains unknown fields or is not an object")
@@ -455,6 +510,8 @@ def _validate_resolutions(resolutions):
             revision = row.get("expected_revision")
             if type(revision) is not int or revision < 1:
                 raise RequestConflict("expected_revision must be a positive integer")
+        if any(str(key).startswith("_image_") for key in row.get("facts", {})):
+            raise RequestConflict("Reserved image provenance fields")
         if relation not in {"new", "amend"} and row.get("facts"):
             raise RequestConflict("Only new/amend resolutions may supply facts")
 

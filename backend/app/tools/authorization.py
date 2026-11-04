@@ -59,6 +59,8 @@ def authorize_action(run_id, arguments):
             raise RequestConflict(
                 "Authorization must cite an original user message in this conversation"
             )
+        if not source.content.strip():
+            raise RequestConflict("Image observations cannot authorize this operation")
         inbox = RequestInbox.get_or_none(RequestInbox.message == source.id)
         if inbox is None or inbox.state != "resolved":
             raise RequestConflict("Resolve the original user message before authorizing its action")

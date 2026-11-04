@@ -12,6 +12,7 @@ from app.api.auth import current
 from app.core.guardrails import SAFE_OUTPUT, ContentRejected, reason, safe_data, safe_text
 from app.db.database import query
 from app.db.dispatch import receipt
+from app.db.image_context import message_attachments
 from app.db.models import Action, Conversation, Event, Message, Run, Trace
 from app.db.repository import TERMINAL, accept, stop
 from app.tools.messages import action_message
@@ -20,7 +21,8 @@ router = APIRouter(prefix="/api")
 
 
 class Submission(BaseModel):
-    content: str = Field(min_length=1, max_length=6000)
+    content: str = Field(default="", max_length=6000)
+    attachment_ids: list[UUID] = Field(default_factory=list, max_length=4)
     client_request_id: UUID
 
 
@@ -93,6 +95,7 @@ async def history(request: Request, before: str | None = None):
                     "content": content,
                     "created_at": datetime.fromtimestamp(m.created_at, UTC).isoformat(),
                     "status": m.status,
+                    "attachments": message_attachments(m.id),
                 }
                 for m in reversed(page)
                 if (content := visible_content(m)) is not None
@@ -106,10 +109,18 @@ async def history(request: Request, before: str | None = None):
 @router.post("/chat/messages")
 async def submit(data: Submission, request: Request):
     user = await current(request)
-    if not data.content.strip():
+    if not data.content.strip() and not data.attachment_ids:
         raise HTTPException(422, "Message cannot be blank.")
     try:
-        return await query(accept, user, data.content, str(data.client_request_id))
+        return await query(
+            accept,
+            user,
+            data.content,
+            str(data.client_request_id),
+            [str(item) for item in data.attachment_ids],
+        )
+    except ValueError as exc:
+        raise HTTPException(422, str(exc)) from None
     except ContentRejected as exc:
         raise HTTPException(422, str(exc)) from None
 

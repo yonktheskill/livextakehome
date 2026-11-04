@@ -35,3 +35,28 @@ Chat content rejected by local profanity/credential/instruction-override checks 
 `backend/app/providers/factory.py`: `create_provider(name: str, model: str | None = None, api_key: str | None = None) -> Provider`. Supported names `fake`, `openrouter`, `codex`. Fake is deterministic/offline, never silently selected on real-provider failure. OpenRouter key is a project secret, not user's Cal.com key. Codex is local-development only, explicit opt-in. Provider code owns no database or Cal.com execution.
 
 Backend agent owns all `backend/` except `app/providers/` and `tests/test_providers*` (provider agent owns those). Backend agent owns pyproject and lockfile; include provider runtime dependencies `httpx` and optional Codex extra as verified/documented by provider agent. Provider agent must communicate dependency requirements in docs/provider-notes.md. No child commits: parent commits tested milestones. Frontend agent owns only `frontend/`. Parent owns root infrastructure/docs and integration.
+
+## Private image attachments
+
+`POST /api/chat/attachments` accepts a raw JPEG/PNG/WebP body with its matching
+`Content-Type` (not multipart). Authentication, origin checks and chat rate limits apply.
+The stream is bounded to 2 MiB even without, or with misleading, Content-Length.
+Returns `{id,mime_type,width,height,size_bytes}` for normalized metadata-free pixels.
+Only static images with edge <=4096 and <=8,000,000 pixels are accepted; errors use
+413 for bytes, 415 for unsupported/mismatched formats or animation, and 422 for decode
+or dimensions. No original duplicate is retained.
+
+`GET /api/chat/attachments/{id}` returns owner-scoped normalized bytes, `private,
+no-store` caching and `nosniff`; missing, expired unsent and foreign IDs return 404.
+Unsent uploads expire after 24h. Sent uploads follow message deletion via cascade.
+
+`POST /api/chat/messages` now accepts `{content:"",client_request_id,attachment_ids:[]}`.
+Content remains capped at 6000 characters and must be nonblank unless attachments exist.
+Supply at most four distinct ordered upload UUIDs owned by the user and not already
+linked to another message. Acceptance claims uploads atomically; invalid IDs do not
+increment revision or interrupt a run. Existing client UUID replay returns its original
+message/run before claiming attachments, including after they have been linked. History
+messages include `attachments: [{id,mime_type,width,height,size_bytes}]`, never bytes.
+Image bytes/base64 are absent from SSE, diagnostic traces and ordinary scheduling context.
+A successful, versioned extraction cache is separate from immutable Message.content.
+All mutation request bodies are bounded (32 KiB except the 2 MiB upload route).

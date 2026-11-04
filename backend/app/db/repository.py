@@ -57,7 +57,8 @@ def finish(run_id, status, kind, payload):
         ).execute()
 
 
-def accept(user, content, request_id):
+def accept(user, content, request_id, attachment_ids=None):
+    attachment_ids = attachment_ids or []
     require_content(content)
     with db.atomic("IMMEDIATE"):
         conv = Conversation.get(Conversation.user == user)
@@ -67,6 +68,23 @@ def accept(user, content, request_id):
         if existing:
             run = Run.get(Run.message == existing)
             return {"run_id": run.id, "message_id": existing.id, "revision": run.revision}
+        from app.db.models import Attachment
+
+        if len(attachment_ids) > 4 or len(set(attachment_ids)) != len(attachment_ids):
+            raise ValueError("Supply up to four distinct attachments.")
+        uploads = [Attachment.get_or_none(Attachment.id == key) for key in attachment_ids]
+        if any(
+            a is None
+            or a.owner_id != user.id
+            or a.message_id is not None
+            or a.created_at < time.time() - 86400
+            for a in uploads
+        ):
+            raise ValueError("Attachment unavailable; upload it again.")
+        if sum(a.size_bytes for a in uploads) > 8 * 1024 * 1024:
+            raise ValueError("Attachments exceed eight MiB.")
+        if not content.strip() and not uploads:
+            raise ValueError("Message cannot be blank.")
         previous_revision = conv.revision
         conv.revision += 1
         conv.save()
@@ -77,6 +95,10 @@ def accept(user, content, request_id):
             time_zone=User.get_by_id(user.id).time_zone,
             client_request_id=request_id,
         )
+        for position, attachment in enumerate(uploads):
+            attachment.message = msg
+            attachment.position = position
+            attachment.save()
         RequestInbox.create(message=msg, conversation=conv)
         pending = list(
             Confirmation.select()
@@ -95,7 +117,12 @@ def accept(user, content, request_id):
         )
         # Require persisted canonical exposure evidence, including legacy proposals.
         pending = [c for c in pending if exposed(c.action)]
-        yes = content.strip().lower() in {"yes", "confirm", "yes, confirm", "confirm cancellation"}
+        yes = not uploads and content.strip().lower() in {
+            "yes",
+            "confirm",
+            "yes, confirm",
+            "confirm cancellation",
+        }
         selected = pending[0] if yes and len(pending) == 1 else None
         if selected and content.strip().lower() == "confirm cancellation":
             if selected.action.kind != "cancel_booking":
@@ -307,6 +334,9 @@ def recover():
 
 
 def cleanup():
+    from app.db.attachments import cleanup_abandoned
+
+    cleanup_abandoned()
     return Trace.delete().where(Trace.created_at < time.time() - 30 * 86400).execute()
 
 

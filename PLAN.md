@@ -358,3 +358,17 @@ Implementation acceptance: an authenticated user can connect their key, list/cre
 Source basis: the supplied `README calcom.md` challenge and `cal_com_agent_reference.md`, live official Cal.com endpoint docs linked above, and the official provider/library/security docs. The current user-approved duration policy is exact reuse, exact creation, then rounding with creation of a missing rounded type. Account-specific behaviour, creation constraints, Codex integration parity, and proxy streaming still require the targeted implementation checks identified in this plan.
 
 Verified implementation milestones: accounts and encrypted connections; Cal.com tool validation; durable runs/SSE; atomic dispatch and canonical receipts; estimated-budget context and sanitized tool traces; frontend; isolated opt-in Codex adapter; CI/Make/Compose. Final offline checks: 87 backend tests, 19 frontend tests, 50 provider tests with the optional SDK, and real HTTP two-container smoke tests. Live Cal.com connectivity could not be established from the execution environment; no live mutations or signed-in model inference were performed. Unknown writes remain blocked pending operator reconciliation. Contacts, images, voice and persistent preferences remain future scope.
+
+## Implemented: private screenshot inputs
+
+- Private normalized SQLite attachments, bounded upload/download, ordered atomic message
+  claims, owner isolation, history metadata and 24h abandoned-upload cleanup.
+- Browser attachment/paste/drop previews, bounded compression, image-only captions,
+  draft preservation and ID-only durable pending retries.
+- Tool-free native vision extraction on the configured provider, persisted/versioned
+  untrusted observations in original-source context, durable request and retrieval paths.
+- Ambiguous essential image facts hold affected tasks for later user clarification;
+  image-only sources cannot grant cancellation/type creation or confirmation authority.
+- Offline upload/provider/integration/frontend regression coverage. Fake fixtures cannot
+  establish real OCR accuracy or injection resistance. Extra extraction latency/cost and
+  confidently wrong/forged facts remain risks. TODO: object storage behind attachments.py.

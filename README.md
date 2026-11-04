@@ -159,3 +159,26 @@ For local inspection, enable `DEBUG_API=true`. The authenticated, owner-scoped
 `GET /api/runs/{run_id}/debug?after=0&limit=100` returns an ordered list containing
 `id`, `created_at`, `kind` and `metadata`. Use the last returned `id` as `after` to
 read the next page; maximum page size is 500. It is disabled by default.
+
+### Private screenshot messages
+
+Attach, paste or drop up to four static JPEG, PNG or WebP screenshots, optionally
+with a caption. Original browser files are limited to 10 MiB each; processed images
+must be at most 2 MiB each / 8 MiB combined, 4096 pixels per edge and 8 megapixels.
+If a long screenshot cannot retain readability within these limits, crop or split it.
+Images use authenticated private routes and dedicated previews; Markdown remote images
+remain disabled. Pending retries store opaque attachment IDs and metadata in session
+storage, never image bytes. Unsent uploads expire after 24 hours; sent images share
+message lifetime. Run `cd backend && uv run python -m app.maintenance cleanup-attachments`
+for explicit abandoned upload cleanup (also performed by upload/runner maintenance).
+
+The configured provider performs one tool-free extraction before scheduling. Successful
+versioned observations are persisted for retries, restart and followups; extraction adds
+latency and image inference cost. Native image support is required by the configured
+model; unsupported models fail without fallback. Fake mode stays offline and deterministic
+and does not read actual pixels. Text captions/questions retain their conversational meaning.
+Image observations cannot authorize cancellation, event type creation, profile changes or
+confirmation. Schema validation and execution gates do not prove OCR truth or injection
+resistance: confidently misread or forged meeting facts remain a material risk. No live
+vision evaluation is implied by the offline tests. TODO: replace the small SQLite BLOB
+storage boundary with private object storage before scaling image volume.

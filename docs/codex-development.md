@@ -175,3 +175,11 @@ its real bundled CLI, and the corresponding official source:
 The newer Rust-only `ToolPolicy.allowed_tools` ceiling is not exposed by this
 Python/app-server interface; this adapter uses the verified environment and feature
 controls instead. Recheck these surfaces before changing the pinned runtime.
+
+Image inputs use the pinned SDK's native `ImageUserInput` data URL parts in a
+separate tool-free extraction turn. Runtime tools, filesystem access, network access
+and environment restrictions remain in force; images do not enable local image paths.
+Choose a vision-capable model for the configured provider. Unsupported input fails
+without a paid fallback. Image transport limits (4 images, 2 MiB each / 8 MiB total)
+are separate from the 256 KB text-input budget; encoded pixels are not text tokens.
+Extraction incurs the configured model's image cost and an extra inference turn.
