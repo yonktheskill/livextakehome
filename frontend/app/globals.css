@@ -1227,3 +1227,88 @@ label {
     transition: none !important;
   }
 }
+
+/* Private image attachments use explicit UI rather than Markdown image loading. */
+.message-images {
+  display: flex;
+  gap: 0.65rem;
+  flex-wrap: wrap;
+  margin-block: 0.5rem;
+}
+.message-image-button {
+  display: block;
+  border: 1px solid var(--border, #ddd);
+  border-radius: 0.65rem;
+  overflow: hidden;
+  max-width: 240px;
+}
+.message-image-button img {
+  width: auto;
+  height: auto;
+  max-width: 240px;
+  max-height: 220px;
+  object-fit: contain;
+}
+.draft-images {
+  display: flex;
+  gap: 0.6rem;
+  flex-wrap: wrap;
+  padding: 0.5rem;
+  list-style: none;
+}
+.draft-images li {
+  position: relative;
+  display: flex;
+  flex-direction: column;
+  gap: 0.3rem;
+  font-size: 0.75rem;
+  max-width: 180px;
+  overflow-wrap: anywhere;
+}
+.draft-images img {
+  width: 110px;
+  height: 85px;
+  object-fit: contain;
+  border-radius: 0.4rem;
+}
+.attach-button {
+  padding: 0.5rem;
+  margin-right: auto;
+  border-radius: 50%;
+}
+.image-dialog {
+  position: relative;
+  z-index: 100;
+}
+.image-dialog-backdrop {
+  position: fixed;
+  inset: 0;
+  background: #000b;
+}
+.image-dialog-wrap {
+  position: fixed;
+  inset: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 1rem;
+}
+.image-dialog-panel {
+  max-width: 95vw;
+  max-height: 95vh;
+  overflow: auto;
+  background: white;
+  border-radius: 0.5rem;
+  padding: 0.5rem;
+}
+.image-dialog-panel img {
+  max-width: 100%;
+  height: auto;
+  display: block;
+}
+.image-close {
+  display: block;
+  margin-left: auto;
+  padding: 0.5rem;
+  color: #111;
+}

@@ -26,7 +26,21 @@ export async function api<T>(path: string, init: RequestInit = {}): Promise<T> {
 }
 export type User = { id: string | number; email: string; time_zone: string };
 export type Connection = { connected: boolean; label: string | null };
-export type Message = { id: string; role: string; content: string; created_at: string; status: string };
+export type Attachment = {
+  id: string;
+  mime_type?: string;
+  width?: number;
+  height?: number;
+  size_bytes?: number;
+};
+export type Message = {
+  attachments?: Attachment[];
+  id: string;
+  role: string;
+  content: string;
+  created_at: string;
+  status: string;
+};
 export type Receipt = {
   action_id: string;
   message_id?: string | null;

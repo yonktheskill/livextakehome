@@ -1,9 +1,9 @@
 "use client";
 import { useCallback, useEffect, useRef, useState } from "react";
 import { Button, Textarea } from "@headlessui/react";
-import { ArrowDown, ArrowUp, BookOpen, RefreshCw, Square } from "lucide-react";
+import { ArrowDown, ArrowUp, BookOpen, RefreshCw, Square, Paperclip, X } from "lucide-react";
 import { useAuth } from "./auth";
-import { api, ApiError, type Connection, type User } from "../lib/api";
+import { api, ApiError, type Attachment, type Connection, type User } from "../lib/api";
 import { useConversation } from "../lib/use-conversation";
 import { conversationTimeline } from "../lib/conversation-timeline";
 import { messageTime } from "../lib/timezone";
@@ -12,6 +12,16 @@ import { ChatHeader } from "./chat-header";
 import { ActionReceipt, Welcome } from "./chat-content";
 import { SafeMarkdown } from "./markdown";
 import { MessageCopy } from "./message-copy";
+import { MessageImages } from "./message-images";
+import { MAX_IMAGES, prepareImage, uploadImage } from "../lib/image-attachments";
+type DraftImage = {
+  key: string;
+  file: File;
+  preview?: string;
+  attachment?: Attachment;
+  status: "processing" | "uploading" | "ready" | "error";
+  error?: string;
+};
 export const MAX_MESSAGE_CHARACTERS = 6000;
 
 export function Chat({ user }: { user: User }) {
@@ -21,6 +31,89 @@ export function Chat({ user }: { user: User }) {
   const [connectionError, setConnectionError] = useState("");
   const [dialog, setDialog] = useState(false);
   const [draft, setDraft] = useState("");
+  const [images, setImages] = useState<DraftImage[]>([]);
+  const imagesRef = useRef<DraftImage[]>([]);
+  const imageUrls = useRef(new Set<string>());
+  const fileInput = useRef<HTMLInputElement>(null);
+  const [failedCaption, setFailedCaption] = useState("");
+  const [imageError, setImageError] = useState("");
+  const alive = useRef(true);
+  useEffect(() => {
+    alive.current = true;
+    const urls = imageUrls.current;
+    return () => {
+      alive.current = false;
+      urls.forEach((url) => URL.revokeObjectURL(url));
+    };
+  }, []);
+  function changeImages(update: (current: DraftImage[]) => DraftImage[]) {
+    const next = update(imagesRef.current);
+    imagesRef.current = next;
+    if (alive.current) setImages(next);
+  }
+  async function processImage(item: DraftImage) {
+    if (item.preview) {
+      URL.revokeObjectURL(item.preview);
+      imageUrls.current.delete(item.preview);
+    }
+    changeImages((current) =>
+      current.map((image) =>
+        image.key === item.key ? { ...image, status: "processing", error: undefined } : image,
+      ),
+    );
+    try {
+      const blob = await prepareImage(item.file);
+      if (!alive.current || !imagesRef.current.some((image) => image.key === item.key)) return;
+      const preview = URL.createObjectURL(blob);
+      imageUrls.current.add(preview);
+      changeImages((current) =>
+        current.map((image) => (image.key === item.key ? { ...image, preview, status: "uploading" } : image)),
+      );
+      const attachment = await uploadImage(blob);
+      changeImages((current) =>
+        current.map((image) => (image.key === item.key ? { ...image, attachment, status: "ready" } : image)),
+      );
+    } catch (error) {
+      changeImages((current) =>
+        current.map((image) =>
+          image.key === item.key
+            ? {
+                ...image,
+                status: "error",
+                error: error instanceof Error ? error.message : "Unable to attach image. Try again.",
+              }
+            : image,
+        ),
+      );
+    }
+  }
+  function addImages(files: File[]) {
+    setImageError("");
+    if (imagesRef.current.length + files.length > MAX_IMAGES) {
+      setImageError("Attach up to four images per message.");
+      return;
+    }
+    const added: DraftImage[] = files.map((file) => ({
+      key: crypto.randomUUID(),
+      file,
+      status: "processing",
+    }));
+    changeImages((current) => [...current, ...added]);
+    added.forEach((item) => void processImage(item));
+  }
+  function removeImages(keys: Set<string>) {
+    changeImages((current) =>
+      current.filter((image) => {
+        if (!keys.has(image.key)) return true;
+        if (image.preview) {
+          URL.revokeObjectURL(image.preview);
+          imageUrls.current.delete(image.preview);
+        }
+        return false;
+      }),
+    );
+  }
+  const imagesBusy = images.some((image) => image.status !== "ready");
   const draftLength = Array.from(draft).length;
   const tooLong = draftLength > MAX_MESSAGE_CHARACTERS;
   const [accountError, setAccountError] = useState("");
@@ -61,11 +154,32 @@ export function Chat({ user }: { user: User }) {
     if (nearBottom.current) scrollToBottom("instant");
   }, [chat.messages, chat.status, chat.receipts, scrollToBottom]);
   async function submit() {
-    if (tooLong || !draft.trim() || chat.pending || chat.sending || chat.loading) return;
+    if (
+      tooLong ||
+      (!draft.trim() && !images.length) ||
+      imagesBusy ||
+      chat.pending ||
+      chat.sending ||
+      chat.loading
+    )
+      return;
     const sent = draft;
+    const sentImages = images;
     nearBottom.current = true;
     setDraft("");
-    if (!(await chat.submit(sent))) setDraft((current) => current || sent);
+    if (
+      !(await chat.submit(
+        sent,
+        false,
+        sentImages.map((image) => image.attachment!),
+      ))
+    ) {
+      setDraft((current) => current || sent);
+      setFailedCaption(sent);
+    } else {
+      setFailedCaption("");
+      removeImages(new Set(sentImages.map((image) => image.key)));
+    }
     input.current?.focus();
   }
   async function signOut() {
@@ -165,6 +279,12 @@ export function Chat({ user }: { user: User }) {
                           {message.status === "sending" && <span>Sending…</span>}
                           {message.status === "unconfirmed" && <span>Delivery unconfirmed</span>}
                         </div>
+                        <MessageImages
+                          attachments={message.attachments}
+                          onLoad={() => {
+                            if (nearBottom.current) scrollToBottom("instant");
+                          }}
+                        />
                         <SafeMarkdown content={message.content} />
                         <MessageCopy content={message.content} />
                       </div>
@@ -197,8 +317,17 @@ export function Chat({ user }: { user: User }) {
                   disabled={chat.sending}
                   onClick={async () => {
                     const content = chat.pending?.content;
-                    if (await chat.submit("", true))
+                    const attachmentIds = new Set(chat.pending?.attachment_ids ?? []);
+                    if (await chat.submit("", true)) {
                       setDraft((current) => (current.trim() === content ? "" : current));
+                      removeImages(
+                        new Set(
+                          imagesRef.current
+                            .filter((image) => attachmentIds.has(image.attachment?.id ?? ""))
+                            .map((image) => image.key),
+                        ),
+                      );
+                    }
                   }}
                 >
                   Retry message
@@ -222,11 +351,88 @@ export function Chat({ user }: { user: User }) {
             ) : null}
             <form
               className="composer"
+              onDragOver={(e) => {
+                if (e.dataTransfer.types.includes("Files")) e.preventDefault();
+              }}
+              onDrop={(e) => {
+                e.preventDefault();
+                addImages(Array.from(e.dataTransfer.files));
+              }}
+              onPaste={(e) => {
+                const files = Array.from(e.clipboardData.items)
+                  .filter((item) => item.kind === "file")
+                  .map((item) => item.getAsFile())
+                  .filter((file): file is File => !!file);
+                if (files.length) {
+                  e.preventDefault();
+                  addImages(files);
+                }
+              }}
               onSubmit={(e) => {
                 e.preventDefault();
                 void submit();
               }}
             >
+              <input
+                ref={fileInput}
+                type="file"
+                className="sr-only"
+                accept="image/jpeg,image/png,image/webp"
+                multiple
+                aria-label="Choose image attachments"
+                onChange={(e) => {
+                  addImages(Array.from(e.target.files ?? []));
+                  e.target.value = "";
+                }}
+              />
+              {!!images.length && (
+                <ul className="draft-images" aria-label="Image attachments">
+                  {images.map((image, i) => (
+                    <li key={image.key}>
+                      {/* eslint-disable-next-line @next/next/no-img-element */}
+                      {image.preview && <img src={image.preview} alt={`Image ${i + 1} preview`} />}
+                      <span>{image.file.name}</span>
+                      <span role="status">
+                        {image.status === "processing"
+                          ? "Processing image…"
+                          : image.status === "uploading"
+                            ? "Uploading image…"
+                            : image.status === "ready"
+                              ? "Ready"
+                              : "Upload failed"}
+                      </span>
+                      {image.error && <span role="alert">{image.error}</span>}
+                      {image.status === "error" && (
+                        <Button type="button" onClick={() => void processImage(image)}>
+                          Retry upload
+                        </Button>
+                      )}
+                      <Button
+                        type="button"
+                        aria-label={`Remove image ${i + 1}`}
+                        onClick={() => removeImages(new Set([image.key]))}
+                      >
+                        <X size={16} />
+                      </Button>
+                    </li>
+                  ))}
+                </ul>
+              )}
+              {imageError && <p role="alert">{imageError}</p>}
+              {failedCaption && draft !== failedCaption && (
+                <div className="recovery-box">
+                  <p>Previous caption: {failedCaption}</p>
+                  <Button
+                    type="button"
+                    onClick={() => {
+                      setDraft((current) => (current ? `${failedCaption}\n${current}` : failedCaption));
+                      setFailedCaption("");
+                    }}
+                  >
+                    Restore previous caption
+                  </Button>
+                </div>
+              )}
               <label className="sr-only" htmlFor="message">
                 Message HelpBook
               </label>
@@ -247,6 +453,16 @@ export function Chat({ user }: { user: User }) {
                 }}
               />
               <div className="composer-bottom">
+                <Button
+                  type="button"
+                  className="attach-button"
+                  aria-label="Attach images"
+                  title="Attach images (or paste/drop a screenshot)"
+                  disabled={images.length >= MAX_IMAGES}
+                  onClick={() => fileInput.current?.click()}
+                >
+                  <Paperclip size={20} />
+                </Button>
                 {chat.run ? (
                   <Button
                     aria-label={chat.stopping ? "Stopping response" : "Stop response"}
@@ -263,12 +479,19 @@ export function Chat({ user }: { user: User }) {
                     )}
                   </Button>
                 ) : null}
-                {(!chat.run || !!draft.trim()) && (
+                {(!chat.run || !!draft.trim() || !!images.length) && (
                   <Button
                     aria-label="Send message"
                     className="send-button"
                     type="submit"
-                    disabled={tooLong || !draft.trim() || chat.sending || chat.loading || !!chat.pending}
+                    disabled={
+                      tooLong ||
+                      (!draft.trim() && !images.length) ||
+                      imagesBusy ||
+                      chat.sending ||
+                      chat.loading ||
+                      !!chat.pending
+                    }
                   >
                     {chat.sending ? <span className="button-loader" /> : <ArrowUp size={22} />}
                   </Button>

@@ -1,9 +1,14 @@
 "use client";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { api, ApiError, type History, type Message, type Receipt } from "./api";
+import { api, ApiError, type Attachment, type History, type Message, type Receipt } from "./api";
 import { SSEParser, terminalEvents, type StreamEvent } from "./sse";
 export type { Receipt } from "./api";
-type Submission = { content: string; client_request_id: string };
+type Submission = {
+  content: string;
+  client_request_id: string;
+  attachment_ids?: string[];
+  attachments?: Attachment[];
+};
 type Accepted = { run_id: string; message_id: string; revision: number };
 export function useConversation(userId: string | number, onUnauthorized: () => void) {
   const [messages, setMessages] = useState<Message[]>([]);
@@ -246,17 +251,30 @@ export function useConversation(userId: string | number, onUnauthorized: () => v
           const value = JSON.parse(raw) as Submission;
           if (
             typeof value.content !== "string" ||
-            !value.content.trim() ||
+            (!value.content.trim() && !value.attachment_ids?.length) ||
+            (value.attachment_ids !== undefined &&
+              (!Array.isArray(value.attachment_ids) ||
+                value.attachment_ids.length > 4 ||
+                !value.attachment_ids.every(
+                  (id) => typeof id === "string" && /^[a-zA-Z0-9-]{1,80}$/.test(id),
+                ))) ||
             value.content.length > 12000 ||
             typeof value.client_request_id !== "string" ||
             !/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(value.client_request_id)
           )
             throw new Error("Invalid saved submission");
-          setPending(value);
+          const restored: Submission = {
+            content: value.content,
+            client_request_id: value.client_request_id,
+            attachment_ids: value.attachment_ids,
+            attachments: value.attachment_ids?.map((id) => ({ id })),
+          };
+          setPending(restored);
           setOptimisticMessage({
             id: `pending:${value.client_request_id}`,
             role: "user",
             content: value.content,
+            attachments: restored.attachments,
             status: "unconfirmed",
             created_at: new Date().toISOString(),
           });
@@ -283,17 +301,40 @@ export function useConversation(userId: string | number, onUnauthorized: () => v
       controller.current?.abort();
     };
   }, [recover]);
-  async function submit(content: string, retry = false) {
-    if (sendLock.current || loading || (retry ? !pending : !!pending || !content.trim())) return false;
+  async function submit(content: string, retry = false, attachments: Attachment[] = []) {
+    if (
+      sendLock.current ||
+      loading ||
+      (retry ? !pending : !!pending || (!content.trim() && !attachments.length))
+    )
+      return false;
     sendLock.current = true;
     setSending(true);
     setError("");
     const submission =
-      retry && pending ? pending : { content: content.trim(), client_request_id: crypto.randomUUID() };
+      retry && pending
+        ? pending
+        : {
+            content: content.trim(),
+            client_request_id: crypto.randomUUID(),
+            ...(attachments.length
+              ? {
+                  attachment_ids: attachments.map((a) => a.id),
+                  attachments: attachments.map(({ id, mime_type, width, height, size_bytes }) => ({
+                    id,
+                    mime_type,
+                    width,
+                    height,
+                    size_bytes,
+                  })),
+                }
+              : {}),
+          };
     const optimistic: Message = {
       id: `pending:${submission.client_request_id}`,
       role: "user",
       content: submission.content,
+      attachments: submission.attachments,
       status: "sending",
       created_at: optimisticMessage?.created_at ?? new Date().toISOString(),
     };
@@ -311,7 +352,11 @@ export function useConversation(userId: string | number, onUnauthorized: () => v
     try {
       const accepted = await api<Accepted>("/chat/messages", {
         method: "POST",
-        body: JSON.stringify(submission),
+        body: JSON.stringify({
+          content: submission.content,
+          client_request_id: submission.client_request_id,
+          ...(submission.attachment_ids?.length ? { attachment_ids: submission.attachment_ids } : {}),
+        }),
       });
       try {
         // Save the accepted run before dropping the only recoverable request identity.
@@ -329,6 +374,7 @@ export function useConversation(userId: string | number, onUnauthorized: () => v
                 id: accepted.message_id,
                 role: "user",
                 content: submission.content,
+                attachments: submission.attachments,
                 status: "sent",
                 created_at: optimistic.created_at,
               },
