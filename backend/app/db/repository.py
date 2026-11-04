@@ -171,7 +171,13 @@ def claim(action_id):
 
 def claim_run():
     with db.atomic("IMMEDIATE"):
-        run = Run.select().where(Run.status == "queued").order_by(Run.created_at).first()
+        active = Run.select(Run.conversation).where(Run.status == "running")
+        run = (
+            Run.select()
+            .where((Run.status == "queued") & Run.conversation.not_in(active))
+            .order_by(Run.created_at, Run.id)
+            .first()
+        )
         if not run:
             return None
         run.status = "running"

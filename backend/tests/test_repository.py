@@ -5,8 +5,8 @@ from concurrent.futures import ThreadPoolExecutor
 from uuid import uuid4
 
 from app.db.database import initialize
-from app.db.models import Action, Confirmation, Conversation, Event, Message, Run, Trace, db
-from app.db.repository import accept, claim, cleanup, emit, recover, stop
+from app.db.models import Action, Confirmation, Conversation, Event, Message, Run, Trace, User, db
+from app.db.repository import accept, claim, claim_run, cleanup, emit, finish, recover, stop
 
 
 def action(user):
@@ -119,3 +119,27 @@ def test_credential_generation_gate_and_no_credential_loss_after_claim(account):
         change(user.id)
     assert exc.value.status_code == 409
     assert Connection.get(Connection.user == user).ciphertext == "opaque"
+
+
+def test_run_claims_are_atomic_and_skip_busy_conversations(account):
+    user, _ = account
+    first = accept(user, "first", str(uuid4()))["run_id"]
+    next_run = accept(user, "correction", str(uuid4()))["run_id"]
+    other = User.create(email="other@example.com", password_hash="unused")
+    Conversation.create(user=other)
+    independent = accept(other, "hello", str(uuid4()))["run_id"]
+    gate = threading.Barrier(2)
+
+    def worker():
+        with db.connection_context():
+            gate.wait()
+            return claim_run()
+
+    with ThreadPoolExecutor(max_workers=2) as pool:
+        futures = [pool.submit(worker) for _ in range(2)]
+        assert {f.result() for f in futures} == {first, independent}
+    assert claim_run() is None
+    assert Run.get_by_id(next_run).status == "queued"
+    finish(first, "interrupted", "run.interrupted", {})
+    assert claim_run() == next_run
+    assert claim_run() is None

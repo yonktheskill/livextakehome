@@ -34,6 +34,8 @@ class ProviderError(Exception):
 
 
 class Provider(Protocol):
+    """Streams may overlap across runs; close only after all run tasks are drained."""
+
     def stream(self, messages: list[dict], tools: list[dict]) -> AsyncIterator[ProviderEvent]: ...
 
     async def aclose(self) -> None: ...

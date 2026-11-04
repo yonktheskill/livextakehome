@@ -85,6 +85,27 @@ The assistant manages **Bookings** through **Event Types** and **Slots**. Cal Ev
 
 Actions and response chunks are persisted before being published. A transactional dispatch claim orders incoming corrections against writes. SQLite cannot atomically commit an external Cal.com request; uncertain outcomes need reconciliation before another potentially duplicate write. See the plan for the exact boundary and acceptance requirements.
 
+## Concurrent runs
+
+The backend runs a bounded pool of async workers. While one run waits for its model
+or Cal.com response, other conversations can progress. Set `MAX_CONCURRENT_RUNS`
+(default `4`, range `1–64`) in `.env.local` or the backend environment; `1` restores
+serial execution. Excess runs remain in the persisted SQLite queue, without
+creating an unbounded number of waiting tasks. Tune the limit to provider rate
+limits and available resources; it bounds whole runs, including tool execution.
+
+Run claims are atomic and skip conversations with a running job. A new message
+still interrupts its conversation's previous run at existing checkpoints, and its
+replacement waits until that run settles. Other conversations continue meanwhile.
+Per-run diagnostics and budgets are isolated. On shutdown, all active workers are
+cancelled and awaited before the shared provider closes. A dispatched write without
+a recorded outcome becomes `needs_reconciliation`; queued work survives restart.
+
+Use **one backend process/replica** with this SQLite queue. Startup recovery assumes
+exclusive ownership of running jobs. Adding Uvicorn workers or replicas requires
+worker ownership/leases and coordinated recovery before it is safe; the async pool
+provides concurrency within the current process.
+
 ## Content guardrails
 
 The backend rejects chat messages containing listed English profanity/slurs, common obfuscations, recognizable credentials, or narrowly matched instruction-override attempts. Rejected submissions do not enter conversation history or interrupt an existing run. The local policy list is `backend/app/core/profanity.txt`; matching uses word boundaries, so names such as Dickinson and Scunthorpe remain valid. Exact names that coincide with a listed term are rejected under the strict policy.

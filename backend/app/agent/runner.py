@@ -15,7 +15,16 @@ from app.core.guardrails import (
 )
 from app.db.database import query
 from app.db.models import Message, Run, Trace, db
-from app.db.repository import checkpoint, claim_run, cleanup, emit, finish, mark_uncertain, recover
+from app.db.repository import (
+    TERMINAL,
+    checkpoint,
+    claim_run,
+    cleanup,
+    emit,
+    finish,
+    mark_uncertain,
+    recover,
+)
 from app.tools.executor import Executor, Interrupted, UnknownOutcome, Waiting
 from app.tools.schemas import definitions
 
@@ -23,7 +32,7 @@ log = logging.getLogger("agent")
 
 
 class Runner:
-    """Single supervised consumer, bounded steps/time, independent of SSE connection."""
+    """Bounded async consumers; one active run per conversation, independent of SSE."""
 
     def __init__(self, settings, vault, provider):
         self.settings, self.provider = settings, provider
@@ -31,28 +40,76 @@ class Runner:
         self.stopping = asyncio.Event()
 
     async def supervise(self):
-        await query(recover)
-        last_cleanup = 0.0
+        try:
+            await query(recover)
+        except Exception as exc:
+            log.error(
+                json.dumps({"event": "runner_recovery_failed", "error_class": type(exc).__name__})
+            )
+            raise
+        workers = [
+            asyncio.create_task(self.consume(), name=f"agent-worker-{index}")
+            for index in range(self.settings.max_concurrent_runs)
+        ]
+        try:
+            while not self.stopping.is_set():
+                try:
+                    await query(cleanup)
+                    await self.pause(3600)
+                except Exception as exc:
+                    log.error(
+                        json.dumps(
+                            {"event": "runner_supervisor_failed", "error_class": type(exc).__name__}
+                        )
+                    )
+                    await self.pause()
+        finally:
+            for worker in workers:
+                worker.cancel()
+            # execute() settles dispatched writes as uncertain on cancellation.
+            # Drain workers before the lifespan closes their shared provider.
+            await asyncio.gather(*workers, return_exceptions=True)
+
+    async def pause(self, seconds=0.25):
+        try:
+            await asyncio.wait_for(self.stopping.wait(), timeout=seconds)
+        except TimeoutError:
+            pass
+
+    async def consume(self):
         while not self.stopping.is_set():
             try:
-                if time.monotonic() - last_cleanup > 3600:
-                    await query(cleanup)
-                    last_cleanup = time.monotonic()
-                run_id = await query(claim_run)
+                # to_thread cannot stop a transaction once it starts. If cancelled
+                # during a claim, await its result and settle it before exiting.
+                claim_task = asyncio.create_task(query(claim_run))
+                try:
+                    run_id = await asyncio.shield(claim_task)
+                except asyncio.CancelledError:
+                    run_id = await claim_task
+                    if run_id:
+                        await query(finish, run_id, "interrupted", "run.interrupted", {})
+                    raise
                 if run_id:
                     await self.execute(run_id)
                 else:
-                    try:
-                        await asyncio.wait_for(self.stopping.wait(), timeout=0.25)
-                    except TimeoutError:
-                        pass
+                    await self.pause()
             except asyncio.CancelledError:
                 raise
-            except Exception:
-                log.error("Runner supervisor recovered from internal error")
-                await asyncio.sleep(0.25)
+            except Exception as exc:
+                log.error(
+                    json.dumps({"event": "runner_worker_failed", "error_class": type(exc).__name__})
+                )
+                await self.pause()
 
     async def execute(self, run_id):
+        try:
+            await self._execute(run_id)
+        except asyncio.CancelledError:
+            # Cover cancellation during exception handlers and final bookkeeping too.
+            await self.stopped(run_id)
+            raise
+
+    async def _execute(self, run_id):
         try:
             async with asyncio.timeout(self.settings.run_timeout_seconds):
                 # Recheck queued messages accepted before the policy was installed.
@@ -73,23 +130,8 @@ class Runner:
             await query(finish, run_id, "waiting_for_user", "run.waiting", {"message": text})
         except Interrupted:
             await query(finish, run_id, "interrupted", "run.interrupted", {})
-        except (UnknownOutcome, TimeoutError, asyncio.CancelledError) as exc:
-            # A timeout/cancellation can occur after dispatch: preserve unknown evidence.
-            unknown = await query(mark_uncertain, run_id)
-            await query(
-                finish,
-                run_id,
-                "needs_reconciliation" if unknown else "failed",
-                "run.failed",
-                {
-                    "message": "Outcome unknown; inspect Cal.com before changing "
-                    "this booking again."
-                    if unknown
-                    else "Run stopped or reached its time limit."
-                },
-            )
-            if isinstance(exc, asyncio.CancelledError):
-                raise
+        except (UnknownOutcome, TimeoutError):
+            await self.stopped(run_id)
         except Exception:
             unknown = await query(mark_uncertain, run_id)
             await query(
@@ -100,6 +142,27 @@ class Runner:
                 {"message": "Agent failed. Check provider configuration and try again."},
             )
             log.error("Agent run failed", extra={"run_id": run_id})
+
+    async def stopped(self, run_id):
+        def settle():
+            with db.atomic("IMMEDIATE"):
+                # Cancellation can race an offloaded terminal commit. Keep its outcome.
+                if Run.get_by_id(run_id).status in TERMINAL:
+                    return
+                unknown = mark_uncertain(run_id)
+                finish(
+                    run_id,
+                    "needs_reconciliation" if unknown else "failed",
+                    "run.failed",
+                    {
+                        "message": "Outcome unknown; inspect Cal.com before changing "
+                        "this booking again."
+                        if unknown
+                        else "Run stopped or reached its time limit."
+                    },
+                )
+
+        await query(settle)
 
     @staticmethod
     def append(run_id, text, *, new_response=False):
