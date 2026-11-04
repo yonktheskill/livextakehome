@@ -8,6 +8,7 @@ from collections.abc import AsyncIterator
 import httpx
 
 from .base import ProviderCapabilities, ProviderError, ProviderEvent, ProviderLimits
+from .images import split_images
 from .sse import Completion, invalid, sse_data
 
 
@@ -30,7 +31,7 @@ async def bounded_lines(response: httpx.Response, limit: int) -> AsyncIterator[s
 
 
 class OpenRouterProvider:
-    capabilities = ProviderCapabilities()
+    capabilities = ProviderCapabilities(images=True)
 
     def __init__(
         self,
@@ -141,13 +142,7 @@ class OpenRouterProvider:
 
     def _payload(self, messages: list[dict], tools: list[dict]) -> dict:
         try:
-            for message in messages:
-                # This adapter intentionally supports text-only content.
-                content = message.get("content")
-                if content is not None and not isinstance(content, str):
-                    raise ProviderError(
-                        "This provider accepts text content only", code="unsupported"
-                    )
+            text_messages, images = split_images(messages, self.limits)
             for tool in tools:
                 if tool.get("type") != "function" or not isinstance(tool["function"]["name"], str):
                     raise invalid()
@@ -165,7 +160,11 @@ class OpenRouterProvider:
             }
             if tools:
                 payload.update(tools=tools, tool_choice="auto")
-            if len(json.dumps(payload, allow_nan=False).encode()) > self.limits.max_input_bytes:
+            budget_payload = {**payload, "messages": text_messages}
+            if (
+                len(json.dumps(budget_payload, allow_nan=False).encode())
+                > self.limits.max_input_bytes
+            ):
                 raise ProviderError("Provider input exceeded its limit", code="input_limit")
             return payload
         except (ValueError, TypeError, KeyError, AttributeError):

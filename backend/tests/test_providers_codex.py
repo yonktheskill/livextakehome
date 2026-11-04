@@ -82,7 +82,8 @@ def sdk(monkeypatch):
 
         def turn_start(self, thread_id, prompt, params):
             self.turn_params = params
-            self.prompt = json.loads(prompt)
+            self.native_input = prompt
+            self.prompt = json.loads(prompt[0]["text"] if isinstance(prompt, list) else prompt)
             return SimpleNamespace(turn=SimpleNamespace(id="turn"))
 
         def next_turn_notification(self, turn_id):
@@ -388,3 +389,32 @@ async def test_api_key_account_rejected_before_thread(sdk, tmp_path):
     assert error.value.code == "account_required"
     assert not hasattr(sdk.instances[0], "thread_params")
     assert sdk.instances[0].closed
+
+
+@pytest.mark.asyncio
+async def test_native_images_are_not_stringified_or_given_tools(sdk, tmp_path):
+    from openai_codex.generated.v2_all import ImageUserInput
+
+    from app.providers.images import split_images
+
+    p = provider(tmp_path, limits=ProviderLimits(max_input_bytes=1000))
+    url = "data:image/png;base64," + "eA=="
+    messages = [
+        {
+            "role": "user",
+            "content": [
+                {"type": "text", "text": "Read scheduling facts"},
+                {"type": "image_url", "image_url": {"url": url}},
+            ],
+        }
+    ]
+    assert split_images(messages, p.limits)[1] == [url]
+    _ = [event async for event in p.stream(messages, [])]
+    client = sdk.instances[-1]
+    assert client.native_input[1] == {"type": "image", "url": url}
+    assert ImageUserInput.model_validate(client.native_input[1]).url == url
+    assert url not in json.dumps(client.prompt)
+    assert client.prompt["tools"] == []
+    assert client.thread_params["dynamicTools"] == []
+    assert client.thread_params["environments"] == []
+    assert client.closed

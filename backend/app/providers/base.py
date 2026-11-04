@@ -54,6 +54,9 @@ class ProviderLimits:
     max_output_tokens: int = 2048
     max_tool_calls: int = 8
     max_input_bytes: int = 256_000
+    max_image_bytes: int = 2 * 1024 * 1024
+    max_images_bytes: int = 8 * 1024 * 1024
+    max_images: int = 4
     max_response_bytes: int = 512_000
     timeout_seconds: float = 60
     max_retries: int = 2
@@ -65,6 +68,9 @@ class ProviderLimits:
             self.max_tool_calls,
             self.max_input_bytes,
             self.max_response_bytes,
+            self.max_image_bytes,
+            self.max_images_bytes,
+            self.max_images,
             self.timeout_seconds,
         ):
             if value <= 0:

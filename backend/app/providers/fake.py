@@ -7,7 +7,7 @@ from .base import ProviderCapabilities, ProviderError, ProviderEvent
 
 
 class FakeProvider:
-    capabilities = ProviderCapabilities()
+    capabilities = ProviderCapabilities(images=True)
 
     def __init__(self, steps: Sequence[Sequence[ProviderEvent]] | None = None):
         self._steps = deepcopy(list(steps)) if steps is not None else None
@@ -19,7 +19,16 @@ class FakeProvider:
             raise ProviderError("Provider is closed", code="closed")
         index = len(self.requests)
         self.requests.append(deepcopy((messages, tools)))
-        if self._steps is None:
+        if self._steps is None and any(isinstance(m.get("content"), list) for m in messages):
+            yield ProviderEvent(
+                "text_delta",
+                text=(
+                    '{"candidates":[],"notes":["Offline demo cannot read images. '
+                    'Type meeting details."]}'
+                ),
+            )
+            yield ProviderEvent("done")
+        elif self._steps is None:
             yield ProviderEvent(
                 "text_delta", text="Offline demo: no calendar actions were executed."
             )

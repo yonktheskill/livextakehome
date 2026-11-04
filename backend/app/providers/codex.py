@@ -12,9 +12,11 @@ from importlib.metadata import PackageNotFoundError, distribution, version
 from pathlib import Path
 from tempfile import TemporaryDirectory
 from threading import Lock
+from typing import Any
 from uuid import uuid4
 
 from .base import ProviderCapabilities, ProviderError, ProviderEvent, ProviderLimits
+from .images import split_images
 
 SDK_VERSION = "0.163.0"
 # Verified against the pinned runtime, including a credential-free mock endpoint.
@@ -208,7 +210,9 @@ class _Process:
 
 class CodexProvider:
     # Emits one validated text event after completion, not token deltas.
-    capabilities = ProviderCapabilities(tools=True, streaming=False, structured_output=True)
+    capabilities = ProviderCapabilities(
+        tools=True, streaming=False, structured_output=True, images=True
+    )
 
     def __init__(
         self,
@@ -254,7 +258,16 @@ class CodexProvider:
                 or any(not isinstance(name, str) or not name for name in names)
             ):
                 raise ValueError("invalid tools")
-            prompt = json.dumps({"messages": messages, "tools": tools}, allow_nan=False)
+            text_messages, images = split_images(messages, self.limits)
+            prompt = json.dumps({"messages": text_messages, "tools": tools}, allow_nan=False)
+            turn_input: Any = (
+                (
+                    [{"type": "text", "text": prompt}]
+                    + [{"type": "image", "url": url} for url in images]
+                )
+                if images
+                else prompt
+            )
             if len(prompt.encode()) > self.limits.max_input_bytes:
                 raise ValueError("input too large")
         except (KeyError, TypeError, ValueError):
@@ -311,7 +324,7 @@ class CodexProvider:
                         started = await asyncio.to_thread(
                             client.turn_start,
                             thread.thread.id,
-                            prompt,
+                            turn_input,
                             {
                                 "environments": [],
                                 "outputSchema": _schema(names, self.limits),
