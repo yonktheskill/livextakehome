@@ -68,8 +68,8 @@ can still sign in. Set it to `true` to reopen registration. The backend default 
 
 `TEST_ACCOUNT_ENABLED=true` creates two accounts at startup, even with registration disabled:
 
-- `test@testingmail.com` / `testtesttest`
-- `test2@testingmail.com` / `testtesttest2`
+- `test@testingmail.com`
+- `test2@testingmail.com`
 
 Each account has its own conversation, and passwords are stored as Argon2 hashes.
 Restarts preserve existing accounts, passwords, and data. This flag defaults to
