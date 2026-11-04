@@ -1,6 +1,11 @@
 # Railway deployment through GitHub Actions
 
-Production URL: https://frontend-production-739e1.up.railway.app
+Production URL: https://livex.hongxu.dev
+
+Railway fallback URL: https://frontend-production-739e1.up.railway.app
+
+Both services are hosted in US West. Cloudflare DNS routes `livex` to
+`ur6qi1kt.up.railway.app` with DNS-only CNAME routing and Railway-managed TLS.
 
 Project: `3a12efd2-c496-4e46-85d4-162a8dcc7ac1`, environment:
 `0662e4db-04f1-4293-bfae-3bc8a8e00af9` (`production`). Railway and GitHub
@@ -39,7 +44,7 @@ Provision the dedicated account login privately after the first backend deployme
 using Railway's file upload/SSH facilities. Never print its contents. For example:
 
 ```sh
-railway volume files --volume 86b6a931-2872-40da-a577-ac70ba31ccb5 upload /absolute/private/login/auth.json /codex/auth.json
+railway volume files --volume 3a46da21-1810-41a5-bc17-896718225182 upload /absolute/private/login/auth.json /codex/auth.json
 ```
 
 Restart the backend after initial provisioning so the entrypoint applies file

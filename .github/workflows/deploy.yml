@@ -32,4 +32,4 @@ jobs:
       - name: Deploy frontend
         run: railway up frontend --path-as-root --service frontend --project "$RAILWAY_PROJECT" --environment "$RAILWAY_ENVIRONMENT" --ci
       - name: Verify public health
-        run: curl --fail --retry 24 --retry-all-errors --retry-delay 5 https://frontend-production-739e1.up.railway.app/api/health
+        run: curl --fail --retry 24 --retry-all-errors --retry-delay 5 https://livex.hongxu.dev/api/health
