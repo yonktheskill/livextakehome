@@ -35,15 +35,28 @@ def start_test_run(run_id, *, resolve_inbox=True):
     """
     import json
 
-    from app.db.models import RequestInbox, Run
+    from app.db.models import BookingRequest, RequestInbox, Run
 
     Run.update(status="running").where(Run.id == run_id).execute()
     if resolve_inbox:
         run = Run.get_by_id(run_id)
         RequestInbox.update(
             state="resolved",
-            resolution=json.dumps({"input": [], "result": []}),
+            resolution=json.dumps({"input": [], "result": [], "legacy": True}),
             resolved_run_id=run_id,
         ).where(
             (RequestInbox.conversation == run.conversation_id) & (RequestInbox.state == "pending")
         ).execute()
+        if (
+            not BookingRequest.select()
+            .where(BookingRequest.conversation == run.conversation_id)
+            .exists()
+        ):
+            # A deterministic approval may already have resolved this legacy
+            # fixture's inbox; retain that proof while keeping semantics out of scope.
+            current = RequestInbox.get_or_none(RequestInbox.message == run.message_id)
+            if current:
+                resolution = json.loads(current.resolution)
+                resolution["legacy"] = True
+                current.resolution = json.dumps(resolution)
+                current.save()

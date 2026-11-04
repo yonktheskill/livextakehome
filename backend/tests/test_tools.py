@@ -448,9 +448,30 @@ async def test_explicit_compound_creation_supports_non_ui_duration(account, text
     user, vault = account
     posts = []
     run = accept(user, text, str(uuid4()))["run_id"]
-    start_test_run(run)
+    start_test_run(run, resolve_inbox=False)
+    from app.db.models import Run
+    from app.db.requests import resolve_requests
+
+    task = resolve_requests(
+        run,
+        Run.get_by_id(run).message_id,
+        [
+            {
+                "relation": "new",
+                "facts": {"duration_minutes": 37},
+                "reason": "Compound booking request",
+            }
+        ],
+    )[0]
     result = await fixture_executor(vault, posts).execute(
-        run, "create_event_type", {"title": "Review", "duration_minutes": 37, "request_id": "r1"}
+        run,
+        "create_event_type",
+        {
+            "title": "Review",
+            "duration_minutes": 37,
+            "request_id": task["request_id"],
+            "request_revision": 1,
+        },
     )
     assert "response" in result and len(posts) == 1
     import json

@@ -1,4 +1,5 @@
 import json
+import re
 import time
 
 from app.core.guardrails import require_content, safe_data
@@ -17,6 +18,34 @@ from app.db.models import (
 )
 
 TERMINAL = {"waiting_for_user", "succeeded", "failed", "interrupted", "needs_reconciliation"}
+
+
+def approval_phrase(content):
+    text = re.sub(r"[,.!]", " ", content.casefold())
+    text = " ".join(text.split())
+    return (
+        text
+        if text
+        in {
+            "yes",
+            "confirm",
+            "confirmed",
+            "yes confirm",
+            "confirm cancellation",
+            "yes please",
+            "yes go ahead",
+            "go ahead",
+            "please do",
+            "sounds good",
+            "yes do it",
+            "yes please do",
+            "yes please go ahead",
+            "that works",
+            "do it",
+            "absolutely",
+        }
+        else None
+    )
 
 
 def emit(run, kind, payload):
@@ -109,22 +138,22 @@ def accept(user, content, request_id, attachment_ids=None):
                 & (Confirmation.consumed == False)  # noqa: E712
                 & (Confirmation.expires > time.time())
                 & (Action.state == "awaiting_confirmation")
-                & (Action.revision == previous_revision)
+                & ((Action.task.is_null(False)) | (Action.revision == previous_revision))
                 & (Run.status == "waiting_for_user")
-                & (Run.revision == previous_revision)
+                & ((Action.task.is_null(False)) | (Run.revision == previous_revision))
                 & (Run.interrupted == False)  # noqa: E712
             )
         )
         # Require persisted canonical exposure evidence, including legacy proposals.
-        pending = [c for c in pending if exposed(c.action)]
-        yes = content.strip().lower() in {
-            "yes",
-            "confirm",
-            "yes, confirm",
-            "confirm cancellation",
-        }
+        pending = [
+            c
+            for c in pending
+            if exposed(c.action)
+            and (not c.action.task_id or c.action.task_revision == c.action.task.revision)
+        ]
+        yes = approval_phrase(content)
         selected = pending[0] if yes and len(pending) == 1 else None
-        if selected and content.strip().lower() == "confirm cancellation":
+        if selected and yes == "confirm cancellation":
             if selected.action.kind != "cancel_booking":
                 selected = None
         Run.update(interrupted=True).where(
@@ -138,6 +167,11 @@ def accept(user, content, request_id, attachment_ids=None):
         ).execute()
         run = Run.create(conversation=conv, message=msg, revision=conv.revision)
         if selected:
+            RequestInbox.update(
+                state="resolved",
+                resolved_run_id=run.id,
+                resolution=json.dumps({"input": [], "result": [], "approval": selected.action_id}),
+            ).where(RequestInbox.message == msg.id).execute()
             selected.evidence_message = msg
             selected.save()
             Action.update(run=run, revision=conv.revision, state="authorized").where(

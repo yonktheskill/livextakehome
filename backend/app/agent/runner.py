@@ -462,7 +462,7 @@ class Runner:
                     "step": step,
                     "provider": self.settings.llm_provider,
                     "model": self.settings.llm_model,
-                    "prompt_version": 5,
+                    "prompt_version": 6,
                     "estimated_input_tokens": estimate(messages, self.settings),
                     "usage": usage,
                     "elapsed_ms": int((time.monotonic() - started) * 1000),

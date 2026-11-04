@@ -38,16 +38,11 @@ Use explicit fake inference for offline UI checks, or configure OpenRouter model
 
 ## Behaviour and safety
 
-- Dependency-free content checks live in `app/core/guardrails.py`, with the strict
-  English policy list in `app/core/profanity.txt`. Input rejection happens before
-  persistence/revision changes. Whole model responses and all tool proposals are
-  checked before publication/dispatch; unchecked partial responses are discarded.
-  Outgoing booking/profile fields are checked at the executor, and external text,
-  confirmations, receipts, canonical history and replay receive filtered views.
-  Profile data is outside the system message. Guardrail traces retain only reason
-  codes and policy version. Existing raw action evidence and completed writes are
-  preserved. These deterministic checks are not semantic moderation or a complete
-  defense against prompt injection; no classifier, extra service or model call is used.
+- Credential checks live in `app/core/guardrails.py`; ordinary names and harmless user
+  wording are accepted. Complete replies/proposals are checked before exposure or
+  execution. Professional output and harmful-action refusal are prompt policy, with
+  code enforcing authenticated scope, schemas, live validation and dispatch evidence.
+  There is no extra moderation service or keyword-based injection guarantee.
 
 - Argon2id salted password hashes; opaque random sessions are stored only as SHA-256
   hashes. Cookies are HttpOnly and SameSite=Lax. Login rotates the browser session;
@@ -69,26 +64,23 @@ Use explicit fake inference for offline UI checks, or configure OpenRouter model
   per-run sequence IDs, `after`, and Last-Event-ID. The runner bounds model steps,
   total tools, text length and total time. Detailed metadata traces expire after 30
   days; messages/actions/replay/context snapshots are retained.
-- Exact cancellations are re-read and fingerprinted, expire after ten minutes, and
-  accept only an unambiguous plain yes/confirm response to one pending proposal.
-  Changed details require another confirmation. Host cancellation covers the whole exact
-  booking and all attendees/seats; confirmation shows live attendees and this scope.
-  Recurring bookings/series remain excluded; seated rescheduling remains unsupported.
-- Booking creation and rescheduling validate personal ownership and live slots.
-  `plan_booking_duration` prefers exact reuse, then exact creation using the application's
-  documented creation choices, then the smallest reusable/creatable larger duration.
-  A missing rounded type is created too (110 becomes 120). Implicit type creation still
-  requires confirmation. Slot/booking validation blocks a longer type when a shorter
-  one can be created; callers retain the original request separately from the effective
-  length. Explicit end/maximum remains a constraint. Rescheduling preserves duration
-  and stores both original UID in inputs
-  and replacement UID in canonical results. Required questions are collected before
-  dispatch; arbitrary bypass flags cannot enter the schemas.
-- Basic reusable types use the one default schedule and the verified account default conferencing app,
-  60-minute notice, zero buffers and a unique generated slug. A narrowly matched explicit
-  request such as “create a 45-minute Consultation type” executes directly. All other
-  proposals ask exact permission, including implicit missing types. A combined
-  create-and-book request currently needs the type confirmation before continuing.
+- Clear exact whole-booking cancellations do not require repeated permission. Semantic
+  authorization can cite an owned original user message and freeze exact tool arguments
+  through `authorize_action`; ambiguous targets/scopes still require clarification.
+  Pending proposals bind to exposed canonical details and expire after ten minutes.
+- Booking creation and rescheduling validate ownership, fields, locations and live slots.
+  Duration planning is optional. Reuse the exact agreed live length or propose an exact
+  new type; no UI-derived creation whitelist or silent rounding remains. Explicit ends
+  and maximums remain binding. Rescheduling preserves attendees/duration and records UID
+  replacements. Reusable types use the verified default schedule/conferencing app,
+  60-minute notice, zero buffers and a unique slug. Implicit creation needs permission;
+  explicit compound creation-and-booking instructions can authorize both operations.
+- Schema version 5 adds durable booking requests, a semantic inbox and task-to-action
+  revisions. Independent requests survive interruptions. `resolve_requests` classifies
+  original messages oldest first; partial amendments preserve unstated details and
+  completed bookings are rescheduled by their actual UID. Writes wait for pending
+  interpretations, settling actions and reconciliation. Stop/restart never silently
+  replays blocked historical requests. See `docs/agent-policy.md`.
 - Inference uses bounded recent messages, extractive snapshots with original time/zone,
   canonical recent action evidence, and owner-scoped lexical history retrieval. Recent
   original user requests and clarifications have a protected reserve (up to 20 messages,
@@ -150,3 +142,9 @@ match the immediately prior revision and operation-specific phrases; competing
 preparations share a unique logical action. Frozen method/path/version/payload and
 authorization are stored before dispatch. Settlement, receipt event and canonical
 receipt message commit together, and history exposes owner-scoped structured receipts.
+
+Context fitting compacts large list results across exchanges before eviction and retains
+planner facts and structured mutation evidence. Unchanged cycles of up to four batches
+receive one response-only recovery attempt inside existing caps. Successful final-step
+writes require persisted action evidence for deterministic reporting. Generated schema
+display titles are omitted to preserve useful input capacity.

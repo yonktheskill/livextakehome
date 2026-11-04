@@ -35,7 +35,7 @@ def prepare_action(
             or not connection.ciphertext
         ):
             raise StalePreparation()
-        from app.db.models import BookingRequest
+        from app.db.models import BookingRequest, RequestInbox
         from app.db.requests import RequestConflict, assert_requests_ready
 
         managed = (
@@ -44,7 +44,9 @@ def prepare_action(
             .exists()
         )
         assert_requests_ready(live.id)
-        if managed:
+        inbox = RequestInbox.get_or_none(RequestInbox.message == live.message_id)
+        legacy = inbox is None or json.loads(inbox.resolution).get("legacy", False)
+        if managed or not legacy:
             if name in {"create_booking", "reschedule_booking"} and not request_id:
                 raise RequestConflict(
                     "Booking writes require durable request_id and request_revision"
@@ -95,7 +97,7 @@ def prepare_action(
             fingerprint=fingerprint,
             state="prepared",
         )
-        if task:
+        if task and name != "create_event_type":
             task.last_action_id = action.id
             task.save()
         if confirmation_required:

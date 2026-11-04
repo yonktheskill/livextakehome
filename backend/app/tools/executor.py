@@ -1,6 +1,6 @@
 import json
 import re
-from datetime import datetime
+from datetime import datetime, timedelta
 from functools import partial
 
 from pydantic import ValidationError
@@ -95,6 +95,7 @@ class Executor:
                 "get_available_slots",
             }:
                 return await self.read(client, name, args, conn)
+            plan = None
             if name in {"create_booking", "reschedule_booking"} and request_id:
                 plan = await query(task_write_plan, run_id, request_id, request_revision)
                 if name != plan["kind"]:
@@ -111,6 +112,27 @@ class Executor:
             if cached:
                 return json.loads(cached.result)
             path, payload, details = await prepare(client, name, args, conn.owner)
+            if name == "reschedule_booking" and plan:
+                start = datetime.fromisoformat(details["start"].replace("Z", "+00:00"))
+                end = datetime.fromisoformat(details["end"].replace("Z", "+00:00"))
+                minutes = (end - start).total_seconds() / 60
+                facts = plan["facts"]
+                if (
+                    facts.get("duration_minutes") is not None
+                    and facts["duration_minutes"] != minutes
+                ):
+                    raise CalError(
+                        "The live duration differs from this request; clarify before moving it."
+                    )
+                if facts.get("maximum_minutes") is not None and minutes > facts["maximum_minutes"]:
+                    raise CalError("The live duration exceeds the agreed maximum; clarify.")
+                if facts.get("explicit_end") is not None:
+                    bound = datetime.fromisoformat(facts["explicit_end"].replace("Z", "+00:00"))
+                    new_start = datetime.fromisoformat(payload["start"].replace("Z", "+00:00"))
+                    if new_start + timedelta(minutes=minutes) > bound:
+                        raise CalError(
+                            "The new time exceeds the agreed end; clarify that constraint."
+                        )
             require_content(payload)
             require_content(details)
             fingerprint = digest(json.dumps(details, sort_keys=True))
@@ -146,8 +168,12 @@ class Executor:
                     "connection_generation": conn.generation,
                     "user_authorization": evidence,
                 },
-                request_id if name in {"create_booking", "reschedule_booking"} else None,
-                request_revision if name in {"create_booking", "reschedule_booking"} else None,
+                request_id
+                if name in {"create_booking", "reschedule_booking", "create_event_type"}
+                else None,
+                request_revision
+                if name in {"create_booking", "reschedule_booking", "create_event_type"}
+                else None,
             )
             if waiting:
                 time_zone = await query(lambda: run.conversation.user.time_zone)

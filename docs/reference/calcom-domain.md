@@ -11,7 +11,7 @@
 5. **Cal Events** (announced as a prelaunch in August 2026) is a separate event-hosting/RSVP/ticketing feature. Do not infer that its API follows the Bookings API.
 6. **The word “event” alone is ambiguous.** Older Cal.com help pages sometimes call event types “events”; external calendars call their entries “events”; and the new Cal Events feature uses the same noun. Determine which resource the user means before mutating anything.
 7. **Never assume arbitrary durations are accepted by the Bookings API.** Check the linked event type's configured permitted durations and returned available slots.
-8. **Never silently overwrite or cancel bookings.** Identify the exact booking, check scope and conflicts, and confirm destructive actions with the user.
+8. **Never silently overwrite or cancel bookings.** Identify the exact booking, check scope and conflicts, and clarify unclear destructive intent; clear exact authorization is sufficient.
 9. **Do not assume Cal.com is a replacement for a general-purpose calendar.** Its native booking records are distinct from Google/Outlook personal calendar events.
 10. **Use live API responses as the authority** for IDs, booking UIDs, statuses, durations, and actual availability. Do not invent availability or bookings.
 
@@ -78,14 +78,14 @@ The user observed the following event-type duration choices (in minutes):
 [5, 20, 25, 30, 40, 45, 50, 60, 75, 80, 90, 120, 150, 180, 240, 300, 360, 420, 480]
 ```
 
-**Interpretation:** This array originated as **observed configured/UI choices**, not a universal Cal.com API-wide duration limit. The current application policy adopts it for creating new event types (`backend/app/tools/durations.py`). Existing types can still be reused at their live configured lengths outside this list, such as 15 minutes. Other accounts, settings and API flows may offer different values.
+**Interpretation:** This array originated as **observed configured/UI choices**, not a universal Cal.com API-wide duration limit. The current application does not use it as a creation whitelist; see `docs/agent-policy.md`. Existing types can still be reused at their live configured lengths outside this list, such as 15 minutes. Other accounts, settings and API flows may offer different values.
 
 **Agent policy for this integration:**
-- For a new booking, call `plan_booking_duration` with the original duration and suitable live type IDs. Prefer exact reuse, then exact creation from the application choices, then the smallest larger reusable/creatable length. Create a missing rounded type too: 110 minutes becomes 120 if no exact type exists, even if 120 needs creation. Reusable type creation requires confirmation and does not itself book a slot.
+- Choose necessary lookups freely; `plan_booking_duration` is an optional exact-length helper. Prefer exact live reuse or propose authorized exact-length creation. Reusable type creation needs permission unless already authorized and does not itself book a slot.
 - When making a booking under a multiple-duration event type, `lengthInMinutes` may select a duration **that the event type actually allows**. Its presence does **not** give unrestricted arbitrary-length booking privileges.
 - If `lengthInMinutes` is omitted, the event type's default length applies.
 - Check available slots for the selected length before trying to book.
-- Disclose rounding and preserve original requested minutes in planning, slot and booking calls. Never exceed explicit end times or maximums; clarify if no length fits. Schedule/API/permission failures do not justify assuming another duration can be created.
+- Preserve the exact agreed minutes in planning, slot and booking calls. Never silently round, exceed explicit end times or exceed maximums; clarify if no length fits. Schedule/API/permission failures do not justify assuming another duration can be created.
 - For dynamic multi-host bookings without a stored event type, Cal.com's docs describe a **different** limited set of allowed lengths: `15, 30, 45, 60, 90` minutes. Do not conflate with the user-observed array.
 
 Source: https://cal.com/docs/api-reference/v2/bookings/create-a-booking

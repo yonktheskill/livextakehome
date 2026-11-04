@@ -333,3 +333,15 @@ def test_no_success_with_unresolved_inbox_or_actionable_task(account):
     resolve(run, "new", facts={"start": "10"})
     finish(run.id, "succeeded", "run.succeeded", {})
     assert Run.get_by_id(run.id).status == "waiting_for_user"
+
+
+def test_reschedule_cannot_ignore_requested_duration_or_attendee_change(account):
+    user, _ = account
+    run, task = new(user)
+    action = prepare(run, task)
+    assert claim(action)
+    settle(action, "succeeded", {"response": {"uid": "actual"}})
+    correction = incoming(user, "Make the meeting 45 minutes instead")
+    amended = resolve(correction, "amend", task, {"duration_minutes": 45})[0]
+    with pytest.raises(RequestConflict, match="preserves duration_minutes"):
+        prepare(correction, amended)

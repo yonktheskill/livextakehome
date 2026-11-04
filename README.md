@@ -81,7 +81,7 @@ For public deployment, place HTTPS ingress in front, set `PUBLIC_ORIGIN` to its 
 
 ## Scheduling boundary
 
-The assistant manages **Bookings** through **Event Types** and **Slots**. Cal Events (tickets/RSVPs) and arbitrary Google/Outlook calendar entries are outside scope. A reusable event type is not an appointment. Host cancellation retains booking history and cancels the whole exact booking for all attendees, including seated bookings; confirmation shows the live target and full scope. Recurring series cancellation and seated rescheduling remain unsupported. Clear booking/reschedule instructions execute once resolved; cancellation and creating a missing type require the agreed confirmation flow.
+The assistant manages **Bookings** through **Event Types** and **Slots**. Cal Events (tickets/RSVPs) and arbitrary Google/Outlook calendar entries are outside scope. A reusable event type is not an appointment. Host cancellation retains booking history and cancels the whole exact booking for all attendees, including seated bookings; any required clarification shows the live target and full scope. Recurring series cancellation and seated rescheduling remain unsupported. Clear booking/reschedule/cancellation instructions execute once their target and scope resolve. Implicit reusable-type creation needs permission unless already authorized. Independent requests remain pending; corrections amend only the identified request. See [agent policy and corrections](docs/agent-policy.md).
 
 Actions and response chunks are persisted before being published. A transactional dispatch claim orders incoming corrections against writes. SQLite cannot atomically commit an external Cal.com request; uncertain outcomes need reconciliation before another potentially duplicate write. See the plan for the exact boundary and acceptance requirements.
 
@@ -108,11 +108,9 @@ provides concurrency within the current process.
 
 ## Content guardrails
 
-The backend rejects chat messages containing listed English profanity/slurs, common obfuscations, recognizable credentials, or narrowly matched instruction-override attempts. Rejected submissions do not enter conversation history or interrupt an existing run. The local policy list is `backend/app/core/profanity.txt`; matching uses word boundaries, so names such as Dickinson and Scunthorpe remain valid. Exact names that coincide with a listed term are rejected under the strict policy.
+The backend rejects recognizable credentials before chat persistence and checks complete model responses and tool proposals before publication or dispatch. Names, harmless frustration and instruction-related words are accepted as scheduling data. Professional responses, harmful-action refusal and the untrusted-data boundary are system policy; keyword blacklists are not treated as a prompt-injection defense.
 
-Each complete model response and all of its tool proposals are checked before that response is published or its tools run. Booking fields, names, event titles/descriptions, and cancellation reasons are checked before writes. Blocked responses produce a fixed safe notice. External tool data, profile values, confirmations, receipts, history and replay are filtered for display/context; original action evidence is retained privately, including truthful outcomes for writes completed before a later response was blocked. Profile values are provided as data outside the system message.
-
-These checks use no extra service, model calls or dependencies. They are a finite English policy list and pattern checks, not semantic harmful-content moderation or a guarantee against prompt injection, every language, or every obfuscation. Harmful-content restrictions also appear in the system prompt; existing ownership, schema and confirmation controls remain the execution boundary. Sensitive appointments such as therapy and sexual health are allowed.
+Credentials are filtered from external data, profile values, confirmations, receipts, history and replay. Original action evidence and truthful outcomes remain intact. Ownership, schemas, live availability, exact authorization evidence, request revisions and dispatch/recovery checks enforce the action boundary. These checks use no additional moderation service or model call.
 
 ## Implementation status
 

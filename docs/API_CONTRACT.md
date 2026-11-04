@@ -23,7 +23,7 @@ Only `action.result` events with `kind: "create_booking"` render a result card. 
 
 Receipts in history and new `action.result` events also include `message_id` and `created_at` (ISO UTC) from the canonical action-result message. Clients interleave cards with chat messages using this creation time and the anchor ID for ties, inside the conversation scroll area. `message.delta` events include the canonical message's `created_at` as well, so live order does not depend on the browser clock. Existing receipt anchors supply these fields on history reads without a database migration.
 
-Chat content rejected by local profanity/credential/instruction-override checks returns HTTP 422 with a safe `detail`, without creating a message/run or changing the conversation revision. A corrected submission can reuse that UUID. Model text is buffered and checked as a complete response before `message.delta` is persisted/published; clients must support a full reply in a single delta. An unchecked partial response is discarded on provider failure or interruption. A blocked response emits a fixed safe notice and `run.failed`. Earlier successful action receipts remain valid. History and replay filter legacy content at read time, including prohibited terms split across old delta events, without rewriting private action evidence.
+Chat content rejected by local credential checks returns HTTP 422 with a safe `detail`, without creating a message/run or changing the conversation revision. A corrected submission can reuse that UUID. Model text is buffered and checked as a complete response before `message.delta` is persisted/published; clients must support a full reply in a single delta. An unchecked partial response is discarded on provider failure or interruption. A blocked response emits a fixed safe notice and `run.failed`. Earlier successful action receipts remain valid. History and replay filter legacy content at read time, including credentials split across old delta events, without rewriting private action evidence.
 
 ## Provider Python interface (owned by provider agent)
 
@@ -60,3 +60,15 @@ messages include `attachments: [{id,mime_type,width,height,size_bytes}]`, never 
 Image bytes/base64 are absent from SSE, diagnostic traces and ordinary scheduling context.
 A successful, versioned extraction cache is separate from immutable Message.content.
 All mutation request bodies are bounded (32 KiB except the 2 MiB upload route).
+
+## Durable booking requests and autonomy
+
+Original messages enter an owner-scoped semantic inbox. The ordinary model loop uses
+`request_context` and `resolve_requests` to preserve independent requests and distinguish
+new work from partial amendments or ambiguity. Booking writes carry `request_id` and
+`request_revision`; completed requests retain their actual booking UID for rescheduling.
+Pending interpretations and unknown outcomes block stale/duplicate mutations. Clear
+instructions authorize actions; `authorize_action` records exact original-user evidence
+for semantic cancellation/type creation when conservative local recognition is insufficient.
+A final assistant reply does not mark unresolved work completed; the run remains waiting.
+No browser API shape change is required. See `docs/agent-policy.md`.

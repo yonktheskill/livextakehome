@@ -5,7 +5,9 @@ legacy actions directly. They intentionally do not simulate booking semantics;
 test_requests covers durable task interpretation using the real accept API.
 """
 
-from app.db.models import Run
+import json
+
+from app.db.models import RequestInbox, Run
 from app.db.repository import accept as raw_accept
 from app.db.requests import request_context, resolve_requests
 
@@ -27,4 +29,9 @@ def accept_interpreted(user, content, request_id):
                 }
             ],
         )
+        row = RequestInbox.get(RequestInbox.message == inbox["message_id"])
+        resolution = json.loads(row.resolution)
+        resolution["legacy"] = True
+        row.resolution = json.dumps(resolution)
+        row.save()
     return accepted

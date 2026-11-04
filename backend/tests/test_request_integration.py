@@ -223,3 +223,117 @@ async def test_successful_booking_followup_reschedules_actual_uid(account):
     refreshed = BookingRequest.get_by_id(task.id)
     assert refreshed.booking_uid == "uid_2" and refreshed.state == "succeeded"
     assert json.loads(refreshed.facts)["attendee"]["email"] == "alex@example.com"
+
+
+@pytest.mark.asyncio
+async def test_partial_facts_allow_resolved_attendee_and_equivalent_time_zone(account):
+    user, vault = account
+    original = submit(user, "Book Alex at 10am Singapore tomorrow, alex@example.com, 30 minutes")
+    start_test_run(original["run_id"], resolve_inbox=False)
+    calendar = Calendar()
+    executor = Executor(vault, lambda key: calendar)
+    resolved = await executor.execute(
+        original["run_id"],
+        "resolve_requests",
+        {
+            "message_id": original["message_id"],
+            "resolutions": [
+                {
+                    "relation": "new",
+                    "reason": "Explicit booking in Singapore time",
+                    "facts": {
+                        "start": "2026-11-06T10:00:00+08:00",
+                        "duration_minutes": 30,
+                        "attendee": {"email": "alex@example.com"},
+                    },
+                }
+            ],
+        },
+    )
+    task = resolved[0]
+    args = {**facts(2), "request_id": task["request_id"], "request_revision": task["revision"]}
+    result = await executor.execute(original["run_id"], "create_booking", args)
+    assert result["response"]["uid"] == "uid_1"
+    assert len(calendar.posts) == 1
+
+
+@pytest.mark.asyncio
+async def test_new_writes_cannot_skip_durable_identity_by_dismissing_message(account):
+    user, vault = account
+    accepted = submit(user, "Book Alex tomorrow at ten")
+    start_test_run(accepted["run_id"], resolve_inbox=False)
+    calendar = Calendar()
+    executor = Executor(vault, lambda key: calendar)
+    await executor.execute(
+        accepted["run_id"],
+        "resolve_requests",
+        {
+            "message_id": accepted["message_id"],
+            "resolutions": [
+                {"relation": "dismiss", "reason": "Deliberately incorrect fixture interpretation"}
+            ],
+        },
+    )
+    result = await executor.execute(accepted["run_id"], "create_booking", facts(10))
+    assert result["code"] == "request_conflict" and "request_id" in result["error"]
+    assert not calendar.posts
+
+
+@pytest.mark.asyncio
+async def test_reschedule_revalidates_preserved_duration_against_live_booking(account):
+    user, vault = account
+    first = submit(user, "Book Alex at ten for thirty minutes")
+    start_test_run(first["run_id"], resolve_inbox=False)
+    calendar = Calendar()
+    executor = Executor(vault, lambda key: calendar)
+    task = (
+        await executor.execute(
+            first["run_id"],
+            "resolve_requests",
+            {
+                "message_id": first["message_id"],
+                "resolutions": [
+                    {"relation": "new", "facts": facts(10), "reason": "Original request"}
+                ],
+            },
+        )
+    )[0]
+    await executor.execute(
+        first["run_id"],
+        "create_booking",
+        {
+            **facts(10),
+            "request_id": task["request_id"],
+            "request_revision": 1,
+        },
+    )
+    calendar.bookings["uid_1"]["end"] = "2026-11-06T11:00:00Z"
+    corrected = submit(user, "Let's book this for noon instead")
+    start_test_run(corrected["run_id"], resolve_inbox=False)
+    await executor.execute(
+        corrected["run_id"],
+        "resolve_requests",
+        {
+            "message_id": corrected["message_id"],
+            "resolutions": [
+                {
+                    "relation": "amend",
+                    "request_id": task["request_id"],
+                    "expected_revision": 1,
+                    "facts": {"start": facts(12)["start"]},
+                    "reason": "Time-only correction",
+                }
+            ],
+        },
+    )
+    result = await executor.execute(
+        corrected["run_id"],
+        "reschedule_booking",
+        {
+            "booking_uid": "uid_1",
+            "new_start": facts(12)["start"],
+            "request_id": task["request_id"],
+            "request_revision": 2,
+        },
+    )
+    assert "live duration differs" in result["error"] and len(calendar.posts) == 1

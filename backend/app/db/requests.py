@@ -6,6 +6,7 @@ All public sync APIs run inside the caller's connection (use database.query).
 """
 
 import json
+from datetime import datetime
 
 from app.core.guardrails import require_content, safe_data
 from app.db.image_context import ambiguous_fields, source_images
@@ -95,7 +96,11 @@ def request_context(run_id, limit=20, offset=0):
     tasks = list(
         BookingRequest.select()
         .where(BookingRequest.conversation == run.conversation_id)
-        .order_by(BookingRequest.created_at.desc(), BookingRequest.id)
+        .order_by(
+            BookingRequest.state.in_(["pending", "held", "settling", "unknown"]).desc(),
+            BookingRequest.created_at.desc(),
+            BookingRequest.id,
+        )
         .offset(offset)
         .limit(limit + 1)
     )
@@ -329,13 +334,46 @@ def task_write_plan(run_id, request_id, expected_revision):
 def associate_action(run, name, encoded, request_id, request_revision):
     """Internal prepare gate, in the same IMMEDIATE transaction as Action.create."""
     plan = task_write_plan(run.id, request_id, request_revision)
+    inputs = json.loads(encoded)
+    if name == "create_event_type" and plan["kind"] == "create_booking":
+        agreed = plan["facts"].get("duration_minutes")
+        if agreed is not None and agreed != inputs.get("duration_minutes"):
+            raise RequestConflict("Reusable type must preserve the task's agreed duration")
+        return BookingRequest.get_by_id(request_id)
     if name != plan["kind"]:
         raise RequestConflict(f"This task requires {plan['kind']}")
-    inputs = json.loads(encoded)
     if name == "reschedule_booking" and inputs.get("booking_uid") != plan["booking_uid"]:
         raise RequestConflict("Reschedule must target the task's actual resulting UID")
     # Ground dispatch in preserved facts, not a stale/reconstructed tool call.
     facts = plan["facts"]
+    if name == "reschedule_booking":
+        original = (
+            Action.select()
+            .where(
+                (Action.task == request_id)
+                & (Action.kind == "create_booking")
+                & (Action.state == "succeeded")
+            )
+            .order_by(Action.created_at.desc())
+            .first()
+        )
+        if original:
+            booked = json.loads(original.inputs)
+            for field in (
+                "attendee",
+                "duration_minutes",
+                "event_type_id",
+                "booking_fields",
+                "location",
+            ):
+                if (
+                    field in facts
+                    and field in booked
+                    and not facts_agree(facts[field], booked[field])
+                ):
+                    raise RequestConflict(
+                        f"Rescheduling preserves {field}; clarify a supported replacement workflow"
+                    )
     for field in (
         "start",
         "attendee",
@@ -350,9 +388,25 @@ def associate_action(run, name, encoded, request_id, request_revision):
             continue
         target = "new_start" if name == "reschedule_booking" and field == "start" else field
         if name == "create_booking" or target == "new_start":
-            if inputs.get(target) != facts[field]:
+            if not facts_agree(facts[field], inputs.get(target), field):
                 raise RequestConflict(f"Tool input disagrees with current request fact: {field}")
     return BookingRequest.get_by_id(request_id)
+
+
+def facts_agree(expected, actual, field=""):
+    """Preserved partial facts allow resolved fields and equivalent timezone offsets."""
+    if isinstance(expected, dict):
+        return isinstance(actual, dict) and all(
+            k in actual and facts_agree(v, actual[k], k) for k, v in expected.items()
+        )
+    if field in {"start", "new_start", "explicit_end"} and isinstance(expected, str):
+        try:
+            left = datetime.fromisoformat(expected.replace("Z", "+00:00"))
+            right = datetime.fromisoformat(actual.replace("Z", "+00:00"))
+            return left.tzinfo is not None and right.tzinfo is not None and left == right
+        except (ValueError, TypeError, AttributeError):
+            pass
+    return expected == actual
 
 
 def task_claimable(action):
@@ -361,6 +415,8 @@ def task_claimable(action):
         if not action.task_id:
             return True  # Legacy action still requires an interpreted inbox and live run.
         plan = task_write_plan(action.run_id, action.task_id, action.task_revision)
+        if action.kind == "create_event_type":
+            return plan["kind"] == "create_booking"
         task = BookingRequest.get_by_id(action.task_id)
         return plan["kind"] == action.kind and task.last_action_id == action.id
     except RequestConflict:
@@ -369,7 +425,7 @@ def task_claimable(action):
 
 def settle_task(action):
     """Called with canonical settlement transaction; retains corrections in flight."""
-    if not action.task_id:
+    if not action.task_id or action.kind == "create_event_type":
         return
     task = BookingRequest.get_by_id(action.task_id)
     if task.last_action_id != action.id:
@@ -466,7 +522,15 @@ def request_tool_definitions():
                                     },
                                     "request_id": {"type": "string"},
                                     "expected_revision": {"type": "integer", "minimum": 1},
-                                    "facts": {"type": "object"},
+                                    "facts": {
+                                        "type": "object",
+                                        "description": "Partial booking arguments: start "
+                                        "(offset-aware ISO timestamp), attendee, duration_minutes, "
+                                        "event_type_id, booking_fields, location, explicit_end or "
+                                        "maximum_minutes. Preserve unstated fields. Resolve each "
+                                        "message once; new is for appointments, dismiss for reads, "
+                                        "profile, cancellation/type commands and approval replies.",
+                                    },
                                     "clarification_evidence": {
                                         "type": "object",
                                         "description": "Map each ambiguous field to "
