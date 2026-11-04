@@ -130,6 +130,89 @@ def test_ambiguity_held_until_later_clarification(account):
     assert task_write_plan(follow["run_id"], task.id, 2)["facts"]["start"] == "10am"
 
 
+@pytest.mark.parametrize("original_image", [False, True])
+def test_ambiguous_image_correction_holds_existing_task(account, original_image):
+    user, _ = account
+    original = upload(user) if original_image else None
+    first = accept(user, "Book at 10am", str(uuid4()), [original.id] if original else [])
+    if original:
+        cache(first["message_id"], 1, observation(original, ambiguous=True))
+    start_test_run(first["run_id"], resolve_inbox=False)
+    resolve_requests(
+        first["run_id"],
+        first["message_id"],
+        [
+            {
+                "relation": "new",
+                "reason": "Explicit original time",
+                "facts": {"start": "10am"},
+                "clarification_evidence": {
+                    "start": {"source_message_id": first["message_id"], "quote": "Book at 10am"}
+                },
+            }
+        ],
+    )
+    task = BookingRequest.get()
+    assert task.state == "pending"
+    replacement = upload(user)
+    correction = accept(user, "Use this time instead", str(uuid4()), [replacement.id])
+    cache(correction["message_id"], 1, observation(replacement, ambiguous=True))
+    start_test_run(correction["run_id"], resolve_inbox=False)
+    resolve_requests(
+        correction["run_id"],
+        correction["message_id"],
+        [
+            {
+                "relation": "amend",
+                "request_id": task.id,
+                "expected_revision": 1,
+                "reason": "Replacement screenshot",
+                "facts": {"start": "guessed noon"},
+            }
+        ],
+    )
+    assert BookingRequest.select().count() == 1
+    assert BookingRequest.get_by_id(task.id).state == "held"
+    with pytest.raises(RequestConflict, match="held"):
+        task_write_plan(correction["run_id"], task.id, 2)
+    follow = accept(user, "The new time is noon", str(uuid4()))
+    start_test_run(follow["run_id"], resolve_inbox=False)
+    with pytest.raises(RequestConflict, match="exact outer user text"):
+        resolve_requests(
+            follow["run_id"],
+            follow["message_id"],
+            [
+                {
+                    "relation": "amend",
+                    "request_id": task.id,
+                    "expected_revision": 2,
+                    "reason": "Guessing is insufficient",
+                    "facts": {"start": "noon"},
+                }
+            ],
+        )
+    resolve_requests(
+        follow["run_id"],
+        follow["message_id"],
+        [
+            {
+                "relation": "amend",
+                "request_id": task.id,
+                "expected_revision": 2,
+                "reason": "Explicit correction",
+                "facts": {"start": "noon"},
+                "clarification_evidence": {
+                    "start": {
+                        "source_message_id": follow["message_id"],
+                        "quote": "The new time is noon",
+                    }
+                },
+            }
+        ],
+    )
+    assert task_write_plan(follow["run_id"], task.id, 3)["facts"]["start"] == "noon"
+
+
 @pytest.mark.parametrize(
     "operation,arguments",
     [

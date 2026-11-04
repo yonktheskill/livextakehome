@@ -37,6 +37,17 @@ def _task(run, request_id):
     return task
 
 
+def _image_sources(task):
+    facts = json.loads(task.facts)
+    if "_image_ambiguity_sources" in facts:
+        return facts["_image_ambiguity_sources"]
+    return (
+        [task.origin_message_id]
+        if ambiguous_fields(task.origin_message_id) and not facts.get("_image_ambiguity_resolved")
+        else []
+    )
+
+
 def _view(task):
     return {
         "request_id": task.id,
@@ -47,6 +58,15 @@ def _view(task):
         "origin_message_id": task.origin_message_id,
         "original_user_message": task.origin_message.content,
         **source_images(task.origin_message_id),
+        **(
+            {
+                "image_ambiguities": [
+                    {"source_message_id": key, **source_images(key)} for key in _image_sources(task)
+                ]
+            }
+            if _image_sources(task)
+            else {}
+        ),
         "last_action_id": task.last_action_id,
     }
 
@@ -211,6 +231,8 @@ def resolve_requests(run_id, message_id, resolutions):
                     )
                     facts = {**facts, "_image_ambiguity_resolved": True}
                     blockers = []
+                if blockers:
+                    facts = {**facts, "_image_ambiguity_sources": [message_id]}
                 task = BookingRequest.create(
                     conversation=run.conversation_id,
                     origin_message=message_id,
@@ -235,23 +257,38 @@ def resolve_requests(run_id, message_id, resolutions):
                         raise RequestConflict("Explicit resume required for blocked request")
                 if relation != "amend" and facts:
                     raise RequestConflict("Only amendments may change existing facts")
+                pending_image_sources = _image_sources(task)
                 if relation in {"amend", "resume"}:
-                    blockers = ambiguous_fields(task.origin_message_id)
-                    if blockers and not json.loads(task.facts).get("_image_ambiguity_resolved"):
+                    incoming_ambiguity = bool(ambiguous_fields(message_id))
+                    if incoming_ambiguity and message_id not in pending_image_sources:
+                        pending_image_sources.append(message_id)
+                    blockers = sorted(
+                        {field for key in pending_image_sources for field in ambiguous_fields(key)}
+                    )
+                    if blockers and (
+                        resolution.get("clarification_evidence") or not incoming_ambiguity
+                    ):
                         _image_clarification(
                             run,
                             task.origin_message_id,
                             blockers,
                             resolution.get("clarification_evidence", {}),
                         )
+                        pending_image_sources = []
+                    if blockers or "_image_ambiguity_sources" in json.loads(task.facts):
                         task.facts = json.dumps(
-                            {**json.loads(task.facts), "_image_ambiguity_resolved": True}
+                            {
+                                **json.loads(task.facts),
+                                "_image_ambiguity_sources": pending_image_sources,
+                            }
                         )
                 _invalidate(task)
                 task.revision += 1
                 if relation == "amend":
                     task.facts = json.dumps(_merge(json.loads(task.facts), facts), sort_keys=True)
                 task.state = {"clarify": "held", "withdraw": "withdrawn"}.get(relation, "pending")
+                if relation in {"amend", "resume"} and pending_image_sources:
+                    task.state = "held"
                 action = Action.get_or_none(Action.id == task.last_action_id)
                 if relation in {"amend", "resume"} and action:
                     if action.state in {"dispatching", "unknown"}:
