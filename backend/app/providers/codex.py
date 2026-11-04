@@ -342,6 +342,12 @@ class CodexProvider:
                             if dump is None:
                                 raise ValueError("unknown runtime notification")
                             payload = dump(mode="json", by_alias=True)
+                            # Runtime user-message notifications echo native image input.
+                            # They are already input-budgeted, not generated output; never
+                            # serialize/log those bytes or charge them as response tokens.
+                            item = payload.get("item", {})
+                            if item.get("type") == "userMessage":
+                                continue
                             received += len(json.dumps(payload).encode())
                             if received > self.limits.max_response_bytes:
                                 raise ProviderError(

@@ -418,3 +418,26 @@ async def test_native_images_are_not_stringified_or_given_tools(sdk, tmp_path):
     assert client.thread_params["dynamicTools"] == []
     assert client.thread_params["environments"] == []
     assert client.closed
+
+
+@pytest.mark.asyncio
+async def test_native_image_echo_does_not_consume_response_budget(sdk, tmp_path):
+    sdk.events = [
+        notification(
+            "item/completed",
+            {"item": {"type": "userMessage", "content": [{"type": "image", "url": "x" * 1000}]}},
+        ),
+        notification(
+            "item/completed",
+            {
+                "item": {
+                    "type": "agentMessage",
+                    "text": json.dumps({"assistant_text": "ok", "tool_proposals": []}),
+                }
+            },
+        ),
+        notification("turn/completed", {"turn": {"status": "completed"}}),
+    ]
+    p = provider(tmp_path, limits=ProviderLimits(max_response_bytes=500))
+    result = await collect(p)
+    assert result[0].text == "ok"
