@@ -64,7 +64,7 @@ links, and replaces `/register` with a closed-registration message. Existing use
 can still sign in. Set it to `true` to reopen registration. The backend default is
 `true` for compatibility when the variable is omitted.
 
-`TEST_ACCOUNT_ENABLED=true` creates `testing@testingmail.com` with password
+`TEST_ACCOUNT_ENABLED=true` creates `test@testingmail.com` with password
 `testtesttest` and its conversation at startup, even with registration disabled.
 The password is stored as an Argon2 hash. Restarts preserve the existing account,
 password, and data. This flag defaults to `false` when omitted. Turning it off stops
@@ -124,7 +124,7 @@ project key; the Codex account login does not supply it.
 
 ## Containers
 
-For containers, select OpenRouter and configure its project model/key, or use `make up LLM_PROVIDER=fake` for an offline demo. The production image excludes the optional native Codex SDK/login.
+For containers, select OpenRouter and configure its project model/key, or use `make up LLM_PROVIDER=fake` for an offline demo. The backend image includes the pinned Codex SDK, with login credentials supplied separately at runtime. See [Railway deployment](docs/railway-deployment.md).
 
 ```sh
 make up
@@ -134,7 +134,7 @@ make down
 
 Compose builds two application containers. Only the frontend is published, bound to localhost:3002; the backend uses a persistent named SQLite volume. `down` preserves that volume. Never remove the volume when merely restarting. Back up SQLite using its backup mechanism, including consistent WAL handling.
 
-For public deployment, place HTTPS ingress in front, set `PUBLIC_ORIGIN` to its exact origin and `COOKIE_SECURE=true`, and configure the ingress to flush SSE without buffering. Store the master encryption key and project model key as deployment secrets. A personal Codex login must never serve public users. Production frontend proxy rewrites use a build-time `BACKEND_URL`; Compose supplies the internal backend address.
+For public deployment, place HTTPS ingress in front, set `PUBLIC_ORIGIN` to its exact origin and `COOKIE_SECURE=true`, and configure the ingress to flush SSE without buffering. Store the master encryption key and project model key as deployment secrets. Account-backed Codex deployment requires explicit opt-in and a private persistent login directory; never bake a login into the image. Production frontend proxy rewrites use a build-time `BACKEND_URL`; Compose supplies the internal backend address.
 
 ## Scheduling boundary
 

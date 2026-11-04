@@ -7,7 +7,7 @@ from app.core.security import passwords, verify_password
 from app.db.models import Conversation, Session, User, db
 from app.main import create_app
 
-CREDENTIALS = {"email": "testing@testingmail.com", "password": "testtesttest"}
+CREDENTIALS = {"email": "test@testingmail.com", "password": "testtesttest"}
 
 
 def settings(tmp_path, **flags):

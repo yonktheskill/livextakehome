@@ -3,7 +3,7 @@
 from app.core.security import passwords
 from app.db.models import Conversation, User, db
 
-TEST_EMAIL = "testing@testingmail.com"
+TEST_EMAIL = "test@testingmail.com"
 
 
 def seed_test_account():
