@@ -34,7 +34,10 @@ def test_version_one_dispatch_evidence_upgrade(database):
     Confirmation.create(conversation=conversation, action=old_action.id, expires=time.time() + 600)
     SchemaVersion.delete().execute()
     SchemaVersion.create(version=1)
-    migrate(SqliteMigrator(db).drop_column("user", "preferred_name"))
+    migrate(
+        SqliteMigrator(db).drop_column("user", "preferred_name"),
+        SqliteMigrator(db).drop_column("user", "time_zone_manual"),
+    )
     path = db.database
     db.close()
     initialize(path)
@@ -42,14 +45,18 @@ def test_version_one_dispatch_evidence_upgrade(database):
         assert {"logical_key", "request"}.issubset({c.name for c in db.get_columns("action")})
         assert Action.get_by_id(old_action.id).state == "superseded"
         assert Confirmation.select().count() == 1
-        assert SchemaVersion.select().order_by(SchemaVersion.version.desc()).get().version == 3
+        assert SchemaVersion.select().order_by(SchemaVersion.version.desc()).get().version == 4
         assert User.get_by_id(user.id).preferred_name is None
+        assert not User.get_by_id(user.id).time_zone_manual
     initialize(path)
 
 
 def test_version_two_profile_upgrade_preserves_accounts(database):
     user = User.create(email="existing@example.com", password_hash="unchanged")
-    migrate(SqliteMigrator(db).drop_column("user", "preferred_name"))
+    migrate(
+        SqliteMigrator(db).drop_column("user", "preferred_name"),
+        SqliteMigrator(db).drop_column("user", "time_zone_manual"),
+    )
     SchemaVersion.delete().execute()
     SchemaVersion.create(version=2)
     path = db.database
@@ -65,3 +72,28 @@ def test_version_two_profile_upgrade_preserves_accounts(database):
     initialize(path)
     with db.connection_context():
         assert User.get_by_id(user.id).preferred_name == "Alex"
+
+
+def test_version_three_timezone_upgrade_preserves_profile(database):
+    user = User.create(
+        email="timezone@example.com",
+        password_hash="unchanged",
+        preferred_name="Alex",
+        time_zone="Asia/Singapore",
+    )
+    migrate(SqliteMigrator(db).drop_column("user", "time_zone_manual"))
+    SchemaVersion.delete().execute()
+    SchemaVersion.create(version=3)
+    path = db.database
+    db.close()
+    initialize(path)
+    with db.connection_context():
+        restored = User.get_by_id(user.id)
+        assert restored.time_zone == "Asia/Singapore"
+        assert restored.preferred_name == "Alex"
+        assert not restored.time_zone_manual
+        restored.time_zone_manual = True
+        restored.save()
+    initialize(path)
+    with db.connection_context():
+        assert User.get_by_id(user.id).time_zone_manual
