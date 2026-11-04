@@ -15,7 +15,7 @@ jobs:
         with:
           node-version: "22"
       - run: npm install --global @railway/cli@5.71.0
-      - name: Upload login directly to private volume
+      - name: Stage temporary runtime login secret
         env:
           RAILWAY_TOKEN: ${{ secrets.RAILWAY_TOKEN }}
           CODEX_LOGIN: ${{ secrets.CODEX_LOGIN_BOOTSTRAP }}
@@ -23,9 +23,4 @@ jobs:
         run: |
           set -euo pipefail
           test -n "$CODEX_LOGIN"
-          umask 077
-          login_dir="$(mktemp -d)"
-          trap 'rm -rf "$login_dir"' EXIT
-          printf '%s' "$CODEX_LOGIN" > "$login_dir/auth.json"
-          unset CODEX_LOGIN
-          railway volume files --volume 3a46da21-1810-41a5-bc17-896718225182 upload "$login_dir/auth.json" /codex/auth.json
+          printf '%s' "$CODEX_LOGIN" | railway variable set --project 3a12efd2-c496-4e46-85d4-162a8dcc7ac1 --environment production --service backend --skip-deploys --stdin CODEX_LOGIN_BOOTSTRAP

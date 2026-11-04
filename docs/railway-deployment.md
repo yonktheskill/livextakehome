@@ -40,7 +40,14 @@ Backend settings include `PUBLIC_ORIGIN` equal to the HTTPS production URL,
 `test2@testingmail.com` / `testtesttest2`. Each starts without a Cal.com connection;
 connect a dedicated test Cal.com account through the app's connection settings.
 
-Provision the dedicated account login privately after the first backend deployment,
+The manual `Provision private Codex login` workflow stages the temporary GitHub
+secret `CODEX_LOGIN_BOOTSTRAP` as a backend runtime variable. The next deployment
+consumes it into `/app/data/codex/auth.json` with mode 0600, without overwriting
+an existing login. After successful provisioning, remove the bootstrap variable
+from Railway and the temporary GitHub secret, then redeploy. No bootstrap value
+is used by the Dockerfile.
+
+Alternatively, provision the dedicated account login privately after deployment,
 using Railway's file upload/SSH facilities. Never print its contents. For example:
 
 ```sh

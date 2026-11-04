@@ -1,12 +1,35 @@
 """Initialize mounted storage, then run the server as the unprivileged app user."""
 
+import json
 import os
 import pwd
 import sys
 from pathlib import Path
 
 
+def provision_codex_login():
+    """Consume a temporary deployment secret into private persistent storage."""
+    login = os.environ.pop("CODEX_LOGIN_BOOTSTRAP", None)
+    if not login:
+        return
+    home = Path(os.environ["LIVEX_CODEX_AUTH_HOME"])
+    if not home.is_absolute():
+        raise ValueError("Codex login directory must be absolute")
+    if not isinstance(json.loads(login), dict):
+        raise ValueError("Invalid Codex login format")
+    home.mkdir(parents=True, exist_ok=True, mode=0o700)
+    target = home / "auth.json"
+    # Never replace an existing login, including a symlink.
+    try:
+        fd = os.open(target, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)
+    except FileExistsError:
+        return
+    with os.fdopen(fd, "w") as stream:
+        stream.write(login)
+
+
 def main():
+    provision_codex_login()
     if os.getuid() == 0:
         account = pwd.getpwnam("app")
         data = Path(os.environ.get("DATABASE_PATH", "/app/data/app.sqlite3")).parent
