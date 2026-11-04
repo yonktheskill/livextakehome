@@ -117,7 +117,7 @@ def accept(user, content, request_id, attachment_ids=None):
         )
         # Require persisted canonical exposure evidence, including legacy proposals.
         pending = [c for c in pending if exposed(c.action)]
-        yes = not uploads and content.strip().lower() in {
+        yes = content.strip().lower() in {
             "yes",
             "confirm",
             "yes, confirm",

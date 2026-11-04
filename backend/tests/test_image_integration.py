@@ -130,17 +130,27 @@ def test_ambiguity_held_until_later_clarification(account):
     assert task_write_plan(follow["run_id"], task.id, 2)["facts"]["start"] == "10am"
 
 
-def test_image_only_never_authorizes_cancel(account):
+@pytest.mark.parametrize(
+    "operation,arguments",
+    [
+        ("cancel_booking", {"booking_uid": "uid", "reason": "cancel"}),
+        ("create_event_type", {"title": "New type", "duration_minutes": 30}),
+    ],
+)
+def test_image_only_never_authorizes_settings(account, operation, arguments):
     user, _ = account
     image = upload(user)
     item = accept(user, "", str(uuid4()), [image.id])
     start_test_run(item["run_id"])
+    from app.tools.executor import Executor
+
+    assert "error" in Executor.save_preferred_name(item["run_id"], "Screenshot Person")
     with pytest.raises(RequestConflict, match="Image observations"):
         authorize_action(
             item["run_id"],
             {
-                "name": "cancel_booking",
-                "arguments": {"booking_uid": "uid", "reason": "cancel"},
+                "name": operation,
+                "arguments": arguments,
                 "source_message_id": item["message_id"],
                 "reason": "Image says cancel",
             },
