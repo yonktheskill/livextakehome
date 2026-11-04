@@ -9,4 +9,4 @@ RUN useradd --create-home app && mkdir -p /app/data && chown app:app /app/data
 ENV PATH="/app/.venv/bin:$PATH"
 EXPOSE 8000
 ENTRYPOINT ["python", "-m", "app.container_entrypoint"]
-CMD ["uvicorn", "app.main:app", "--host", "0.0.0.0", "--port", "8000", "--workers", "1", "--no-access-log", "--no-proxy-headers"]
+CMD ["python", "-m", "app.serve"]

@@ -21,7 +21,8 @@ Railway requires account verification before creating that token.
 The Railway services use their respective Dockerfiles. Service settings are
 configured directly in Railway; deprecated Railway config files are not used.
 The frontend builds with `BACKEND_URL=http://backend.railway.internal:8000` and
-listens on port 3000. The backend listens on IPv6 port 8000 for private networking,
+listens on port 3000. The backend uses `python -m app.serve` and listens on a dual-stack socket on port
+8000 for both IPv4 health checks and IPv6 private networking,
 runs one process/replica, and checks `/api/health`. Only the frontend has a public
 domain. The frontend health check is `/login`.
 
