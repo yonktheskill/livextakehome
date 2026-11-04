@@ -53,6 +53,7 @@ def authorize_action(run_id, arguments):
             (Message.id == arguments["source_message_id"])
             & (Message.conversation == run.conversation_id)
             & (Message.role == "user")
+            & (Message.status == "final")
             & (Message.created_at <= run.message.created_at)
         )
         if source is None:

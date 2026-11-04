@@ -9,6 +9,7 @@ dependencies = [
     "cryptography>=44",
     "argon2-cffi>=23",
     "httpx>=0.28",
+    "websockets>=15,<17",
     "pydantic-settings>=2.7",
     "email-validator>=2",
     "pillow>=12,<13",

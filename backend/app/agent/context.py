@@ -167,6 +167,14 @@ def assemble(run_id, settings=None, tools=None, *, audit=None):
         "role": "system",
         "content": f"{PROMPT}\nCurrent UTC: {datetime.now(UTC).isoformat()}\n",
     }
+    if current.source == "voice":
+        system["content"] += (
+            "This request comes from a live voice call. If the caller asks to end the call "
+            "or says they are done, use end_call and do not start further scheduling work. "
+            "Ending voice never cancels a booking. The application sends a farewell and "
+            "disconnects after playback. After successful booking completion, the application "
+            "ends voice automatically once all requests are settled.\n"
+        )
     if Attachment.select().join(Message).where(Message.conversation == conv).exists():
         system["content"] += Path(__file__).with_name("prompts").joinpath("images.txt").read_text()
     actions = list(
@@ -248,6 +256,8 @@ def assemble(run_id, settings=None, tools=None, *, audit=None):
         raise ContextBudgetExceeded("Current request and action identities exceed input budget")
     previous = Message.select().where(
         (Message.conversation == conv)
+        & (Message.status != "voice_partial")
+        & ((Message.source != "voice_backend") | (Message.status == "waiting_for_user"))
         & (Message.created_at <= current.created_at)
         & (Message.id != current.id)
     )
@@ -680,6 +690,8 @@ def retrieve(run_id, query, excluded=None, settings=None, *, role="user", source
     )[:32]
     rows = Message.select().where(
         (Message.conversation == run.conversation_id)
+        & (Message.status != "voice_partial")
+        & ((Message.source != "voice_backend") | (Message.status == "waiting_for_user"))
         & (Message.created_at <= run.message.created_at)
         & (Message.id != run.message_id)
     )

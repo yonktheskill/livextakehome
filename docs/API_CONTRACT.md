@@ -1,5 +1,52 @@
 # Implementation integration contract
 
+## Live voice extension
+
+Voice is optional and configured independently of the text provider. All routes use
+the same authenticated owner and origin boundary as chat. No API key is returned
+to the browser.
+
+- `GET /api/voice/config` → `{enabled:boolean}`.
+- `POST /api/voice/sessions`: `{sdp,client_request_id:UUID}` → `{id,sdp}`. The
+  browser supplies its WebRTC offer; the server returns the provider's answer.
+  Duplicate creation IDs do not open a second billed session. End an existing
+  session before creating another for the same conversation.
+- `GET /api/voice/sessions/{id}/events?after=N`: replayable SSE, also accepts
+  `Last-Event-ID`. `message.upsert` contains `{message:{id,role,content,created_at,
+  status,source,attachments,version}}`; replace content rather than appending it.
+  Voice reply IDs stay stable across backend clarification, spoken captions and
+  history reload. Action confirmations optionally include `confirmation:{message_id,content}`
+  inside the same message; these are exact backend details, not another chat bubble.
+  Other public events are `voice.state`, `voice.notice`, `action.result`,
+  `voice.end_requested` `{request_id,reason}` and `voice.end_cancelled` `{request_id}`.
+- `POST /api/voice/sessions/{id}/mute`: `{muted:boolean}`.
+- `POST /api/voice/sessions/{id}/stop`: end the voice session and flush captions.
+- `POST /api/voice/sessions/{id}/playback-finished`: `{request_id:UUID}` → `{closed:boolean}`.
+  Only the current end request can close the session; stale or cancelled acknowledgments
+  do nothing. Like the other voice routes, this is authenticated and owner-scoped.
+
+Audio travels on WebRTC media tracks; backend sideband events persist captions
+before publishing them. Normal chat history includes the voice messages with
+`source:"voice"`. `voice_partial` captions are visible but excluded from actionable
+context and authorization evidence. GPT-Live transcript fragments have approximate
+session-relative timestamps, with no completed-turn event; caption grouping is
+separate from delegation. Both speakers can update captions concurrently.
+
+Client delegation reuses the configured agent runner and existing action executor.
+Backend answers feed the spoken session; canonical confirmation questions and
+action receipts remain visible. Sending typed input ends voice first and then
+uses the existing message API. Live speech bypasses complete-response checks;
+typed responses and backend tool proposals retain their existing checks.
+
+The voice backend exposes `end_call` to the existing agent. Direct requests such as
+"end call" also have a narrow transcript fallback, so hangup does not depend on Live
+choosing to delegate. Successful booking creation requests automatic closure only
+after all requests/actions are settled. New speech cancels that automatic closure.
+The browser monitors remote audio and waits for quiet playback after the farewell
+before acknowledging the end request. Live has no output-done event: this uses a
+silence window and conservative timeouts, rather than claiming word-exact playback.
+If the browser disappears, a bounded server timeout closes the billed session.
+
 All backend paths retain `/api` through the Next.js same-origin proxy. JSON errors use `detail` (string). Cookie auth; mutation requests require matching Origin when present, and frontend sends same-origin requests. Do not read or expose `.env` contents in tools/logs. No real mutations in tests.
 
 ## Browser API

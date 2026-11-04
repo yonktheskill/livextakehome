@@ -62,6 +62,42 @@ export function useConversation(userId: string | number, onUnauthorized: () => v
         return [...new Map(combined.map((r) => [r.action_id, r])).values()];
       });
   }, []);
+  const applyVoiceEvent = useCallback((frame: StreamEvent) => {
+    if (frame.type === "message.upsert") {
+      const message = frame.data.message as Message | undefined;
+      if (
+        !message ||
+        typeof message.id !== "string" ||
+        typeof message.content !== "string" ||
+        !["user", "assistant"].includes(message.role) ||
+        typeof message.created_at !== "string"
+      )
+        return;
+      setMessages((previous) => {
+        const existing = previous.find((item) => item.id === message.id);
+        if (
+          existing?.version !== undefined &&
+          message.version !== undefined &&
+          existing.version > message.version
+        )
+          return previous;
+        return [...previous.filter((item) => item.id !== message.id), message].sort((a, b) =>
+          a.created_at < b.created_at ? -1 : a.created_at > b.created_at ? 1 : a.id.localeCompare(b.id),
+        );
+      });
+    }
+    if (
+      frame.type === "action.result" &&
+      frame.data.kind === "create_booking" &&
+      typeof frame.data.action_id === "string"
+    ) {
+      const receipt = frame.data as Receipt;
+      setReceipts((previous) => [
+        ...previous.filter((item) => item.action_id !== receipt.action_id),
+        receipt,
+      ]);
+    }
+  }, []);
   const connect = useCallback(
     (runId: string, fresh = true) => {
       controller.current?.abort();
@@ -435,6 +471,8 @@ export function useConversation(userId: string | number, onUnauthorized: () => v
     sending,
     stopping,
     pending,
+    applyVoiceEvent,
+    refreshHistory: history,
     submit,
     stop,
     reconnect: () => {

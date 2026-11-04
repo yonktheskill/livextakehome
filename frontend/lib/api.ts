@@ -34,6 +34,9 @@ export type Attachment = {
   size_bytes?: number;
 };
 export type Message = {
+  confirmation?: { message_id: string; content: string };
+  source?: "voice";
+  version?: number;
   attachments?: Attachment[];
   id: string;
   role: string;

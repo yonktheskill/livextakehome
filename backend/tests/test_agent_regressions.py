@@ -183,15 +183,29 @@ async def test_realistic_two_lookup_batch_reaches_final_answer(account):
 
 
 @pytest.mark.asyncio
-async def test_run_deadline_is_diagnosed_while_model_is_active(account):
+async def test_run_deadline_is_diagnosed_while_model_is_active(account, monkeypatch):
     import asyncio
 
     user, vault = account
     run_id = accept(user, "Hello", str(uuid4()))["run_id"]
     start_test_run(run_id)
+    original_timeout = asyncio.timeout
+    deadline = None
+
+    def timeout_at_model_entry(seconds):
+        nonlocal deadline
+        assert seconds == 0.02
+        # Context/schema assembly may exceed 20 ms on a cold or loaded machine.
+        # Exercise a real asyncio deadline deterministically after model entry.
+        deadline = original_timeout(None)
+        return deadline
+
+    monkeypatch.setattr("app.agent.runner.asyncio.timeout", timeout_at_model_entry)
 
     class Blocked:
         async def stream(self, messages, tools):
+            assert deadline is not None
+            deadline.reschedule(asyncio.get_running_loop().time())
             await asyncio.Event().wait()
             yield
 

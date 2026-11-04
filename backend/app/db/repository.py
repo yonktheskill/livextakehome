@@ -86,7 +86,7 @@ def finish(run_id, status, kind, payload):
         ).execute()
 
 
-def accept(user, content, request_id, attachment_ids=None):
+def accept(user, content, request_id, attachment_ids=None, *, voice_message_id=None):
     attachment_ids = attachment_ids or []
     require_content(content)
     with db.atomic("IMMEDIATE"):
@@ -117,18 +117,31 @@ def accept(user, content, request_id, attachment_ids=None):
         previous_revision = conv.revision
         conv.revision += 1
         conv.save()
-        msg = Message.create(
-            conversation=conv,
-            role="user",
-            content=content,
-            time_zone=User.get_by_id(user.id).time_zone,
-            client_request_id=request_id,
-        )
+        if voice_message_id:
+            msg = Message.get(
+                (Message.id == voice_message_id)
+                & (Message.conversation == conv)
+                & (Message.role == "user")
+                & (Message.source == "voice")
+            )
+            if msg.content != content or Run.select().where(Run.message == msg).exists():
+                raise ValueError("Voice message has already been accepted")
+            msg.client_request_id = request_id
+            msg.status = "final"
+            msg.save()
+        else:
+            msg = Message.create(
+                conversation=conv,
+                role="user",
+                content=content,
+                time_zone=User.get_by_id(user.id).time_zone,
+                client_request_id=request_id,
+            )
         for position, attachment in enumerate(uploads):
             attachment.message = msg
             attachment.position = position
             attachment.save()
-        RequestInbox.create(message=msg, conversation=conv)
+        RequestInbox.get_or_create(message=msg, defaults={"conversation": conv})
         pending = list(
             Confirmation.select()
             .join(Action)

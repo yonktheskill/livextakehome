@@ -43,8 +43,16 @@ async def history(request: Request, before: str | None = None):
     user = await current(request)
 
     def load():
+        from app.db.voice import confirmation_details, visible_confirmation_ids
+
         conv = Conversation.get(Conversation.user == user.id)
-        rows = Message.select().where(Message.conversation == conv)
+        rows = Message.select().where(
+            (Message.conversation == conv)
+            & (
+                (Message.source != "voice_backend")
+                | Message.id.in_(visible_confirmation_ids(conv.id))
+            )
+        )
         if before:
             boundary = Message.get_or_none((Message.id == before) & (Message.conversation == conv))
             if not boundary:
@@ -95,7 +103,9 @@ async def history(request: Request, before: str | None = None):
                     "content": content,
                     "created_at": datetime.fromtimestamp(m.created_at, UTC).isoformat(),
                     "status": m.status,
+                    "source": m.source,
                     "attachments": message_attachments(m.id),
+                    **({"confirmation": details} if (details := confirmation_details(m)) else {}),
                 }
                 for m in reversed(page)
                 if (content := visible_content(m)) is not None

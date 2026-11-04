@@ -208,7 +208,7 @@ DESCRIPTIONS = {
 }
 
 
-def definitions():
+def definitions(*, voice=False):
     from app.db.requests import request_tool_definitions
     from app.tools.authorization import authorization_tool_definitions
 
@@ -226,6 +226,27 @@ def definitions():
         ]
         + request_tool_definitions()
         + authorization_tool_definitions()
+        + (
+            [
+                {
+                    "type": "function",
+                    "function": {
+                        "name": "end_call",
+                        "description": "End voice when the caller asks to hang up, "
+                        "stop talking, or says they are done. This never cancels "
+                        "a booking. Do not call while the caller still wants help. "
+                        "The application handles the farewell and disconnects after playback.",
+                        "parameters": {
+                            "type": "object",
+                            "properties": {},
+                            "additionalProperties": False,
+                        },
+                    },
+                }
+            ]
+            if voice
+            else []
+        )
     )
 
 

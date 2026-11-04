@@ -22,11 +22,11 @@ def initialize(path: str):
     with db.connection_context(), db.atomic("IMMEDIATE"):
         db.create_tables([SchemaVersion])
         version = SchemaVersion.select().order_by(SchemaVersion.version.desc()).first()
-        if version and version.version > 6:
+        if version and version.version > 7:
             raise RuntimeError("Database schema is newer than this application")
         if not version:
             db.create_tables(TABLES)
-            SchemaVersion.create(version=6)
+            SchemaVersion.create(version=7)
         elif version.version == 1:
             migrator = SqliteMigrator(db)
             migrate(
@@ -82,6 +82,16 @@ def initialize(path: str):
 
             db.create_tables([Attachment, Extraction])
             SchemaVersion.create(version=6)
+
+        if version and version.version < 7:
+            from app.db.models import VoiceEvent, VoiceSegment, VoiceSession
+
+            if "source" not in {column.name for column in db.get_columns("message")}:
+                db.execute_sql(
+                    "ALTER TABLE message ADD COLUMN source VARCHAR(255) NOT NULL DEFAULT 'text'"
+                )
+            db.create_tables([VoiceSession, VoiceEvent, VoiceSegment])
+            SchemaVersion.create(version=7)
 
 
 async def query(fn, *args, **kwargs):

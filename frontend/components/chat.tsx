@@ -1,10 +1,22 @@
 "use client";
 import { useCallback, useEffect, useRef, useState } from "react";
 import { Button, Textarea } from "@headlessui/react";
-import { ArrowDown, ArrowUp, BookOpen, RefreshCw, Square, Paperclip, X } from "lucide-react";
+import {
+  ArrowDown,
+  ArrowUp,
+  BookOpen,
+  RefreshCw,
+  Square,
+  Paperclip,
+  X,
+  Mic,
+  MicOff,
+  PhoneOff,
+} from "lucide-react";
 import { useAuth } from "./auth";
 import { api, ApiError, type Attachment, type Connection, type User } from "../lib/api";
 import { useConversation } from "../lib/use-conversation";
+import { useVoice } from "../lib/use-voice";
 import { conversationTimeline } from "../lib/conversation-timeline";
 import { messageTime } from "../lib/timezone";
 import { ConnectionDialog } from "./connection-dialog";
@@ -27,6 +39,7 @@ export const MAX_MESSAGE_CHARACTERS = 6000;
 export function Chat({ user }: { user: User }) {
   const { logout, refresh, refreshProfile, updateTimeZone } = useAuth();
   const chat = useConversation(user.id, refresh);
+  const voice = useVoice(chat.applyVoiceEvent, chat.refreshHistory, refresh);
   const [connection, setConnection] = useState<Connection | null>(null);
   const [connectionError, setConnectionError] = useState("");
   const [dialog, setDialog] = useState(false);
@@ -154,7 +167,7 @@ export function Chat({ user }: { user: User }) {
   }, [refresh]);
   useEffect(() => {
     if (nearBottom.current) scrollToBottom("instant");
-  }, [chat.messages, chat.status, chat.receipts, scrollToBottom]);
+  }, [chat.messages, chat.status, chat.receipts, voice.active, voice.playbackBlocked, scrollToBottom]);
   async function submit() {
     if (
       tooLong ||
@@ -163,9 +176,12 @@ export function Chat({ user }: { user: User }) {
       chat.pending ||
       chat.sending ||
       chat.stopping ||
-      chat.loading
+      chat.loading ||
+      voice.state === "connecting" ||
+      voice.state === "stopping"
     )
       return;
+    if (voice.active && !(await voice.end())) return;
     const sent = draft;
     const sentImages = images;
     nearBottom.current = true;
@@ -189,6 +205,7 @@ export function Chat({ user }: { user: User }) {
     setLoggingOut(true);
     setAccountError("");
     try {
+      if (voice.active) await voice.end();
       await logout();
     } catch (e) {
       setAccountError(e instanceof Error ? e.message : "Unable to sign out.");
@@ -281,6 +298,13 @@ export function Chat({ user }: { user: User }) {
                           <span>{messageTime(message.created_at, user.time_zone)}</span>
                           {message.status === "sending" && <span>Sending…</span>}
                           {message.status === "unconfirmed" && <span>Delivery unconfirmed</span>}
+                          {message.source === "voice" && <span>Voice</span>}
+                          {message.source === "voice" && message.status === "voice_partial" && (
+                            <span>Live transcript</span>
+                          )}
+                          {message.source === "voice" && message.status === "voice_interrupted" && (
+                            <span>Interrupted</span>
+                          )}
                         </div>
                         <MessageImages
                           attachments={message.attachments}
@@ -289,6 +313,12 @@ export function Chat({ user }: { user: User }) {
                           }}
                         />
                         <SafeMarkdown content={message.content} />
+                        {message.confirmation && (
+                          <details open>
+                            <summary>Action confirmation details</summary>
+                            <SafeMarkdown content={message.confirmation.content} />
+                          </details>
+                        )}
                         <MessageCopy content={message.content} />
                       </div>
                     </article>
@@ -352,6 +382,60 @@ export function Chat({ user }: { user: User }) {
                 {chat.streamState === "paused" && <Button onClick={chat.reconnect}>Reconnect</Button>}
               </div>
             ) : null}
+            {voice.active && (
+              <div className="voice-controls" aria-label="Voice chat controls">
+                <span role="status">
+                  {voice.state === "connecting"
+                    ? "Connecting voice…"
+                    : voice.state === "stopping"
+                      ? "Ending voice…"
+                      : voice.state === "ending"
+                        ? "Finishing the call…"
+                        : voice.state === "reconnecting"
+                          ? "Reconnecting transcripts…"
+                          : voice.state === "failed"
+                            ? "Voice stopped; retry End to save transcripts."
+                            : voice.muted
+                              ? "Microphone muted"
+                              : "Voice is live"}
+                </span>
+                <Button
+                  type="button"
+                  className={`voice-button${voice.muted ? " voice-button-muted" : ""}`}
+                  aria-pressed={voice.muted}
+                  aria-label={voice.muted ? "Unmute microphone" : "Mute microphone"}
+                  disabled={voice.muting || voice.state !== "active"}
+                  onClick={() => void voice.toggleMute()}
+                >
+                  {voice.muted ? <MicOff size={18} /> : <Mic size={18} />}
+                  {voice.muted ? "Unmute" : "Mute"}
+                </Button>
+                <Button
+                  type="button"
+                  className="voice-button voice-button-end"
+                  aria-label="End voice chat"
+                  disabled={voice.state === "connecting" || voice.state === "stopping"}
+                  onClick={() => void voice.end()}
+                >
+                  <PhoneOff size={18} />
+                  End
+                </Button>
+                <small>Sending a typed message ends voice first.</small>
+              </div>
+            )}
+            {voice.playbackBlocked && (
+              <div className="voice-controls">
+                <span>Enable audio to hear the assistant.</span>
+                <Button type="button" onClick={() => void voice.resumePlayback()}>
+                  Enable audio
+                </Button>
+              </div>
+            )}
+            {voice.error && (
+              <p className="voice-error" role="alert">
+                {voice.error}
+              </p>
+            )}
             <form
               className="composer"
               onDragOver={(e) => {
@@ -466,6 +550,18 @@ export function Chat({ user }: { user: User }) {
                 >
                   <Paperclip size={20} />
                 </Button>
+                {voice.enabled && !voice.active && (
+                  <Button
+                    type="button"
+                    className="voice-button"
+                    aria-label="Start voice chat"
+                    disabled={chat.loading || chat.sending || !!chat.pending || !!chat.run}
+                    onClick={() => void voice.start()}
+                  >
+                    <Mic size={19} />
+                    <span>Voice</span>
+                  </Button>
+                )}
                 {showStop ? (
                   <Button
                     aria-label={chat.stopping ? "Stopping response" : "Stop response"}
@@ -493,6 +589,8 @@ export function Chat({ user }: { user: User }) {
                       imagesBusy ||
                       chat.sending ||
                       chat.loading ||
+                      voice.state === "connecting" ||
+                      voice.state === "stopping" ||
                       !!chat.pending
                     }
                   >

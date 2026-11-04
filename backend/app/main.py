@@ -9,7 +9,7 @@ from fastapi.exceptions import RequestValidationError
 from fastapi.responses import JSONResponse
 from pydantic import ValidationError
 
-from app.api import attachments, auth, chat, connection
+from app.api import attachments, auth, chat, connection, voice
 from app.core.config import Settings
 from app.core.security import KeyVault, digest
 from app.db.database import initialize, query
@@ -69,6 +69,11 @@ def create_app(settings=None, provider=None):
             from app.db.seed import seed_test_account
 
             await query(seed_test_account)
+        from app.db.voice import recover as recover_voice
+        from app.providers.voice import VoiceManager
+
+        await query(recover_voice)
+        app.state.voice = VoiceManager(settings)
         runner = None
         task = None
         runtime_provider = provider
@@ -122,6 +127,7 @@ def create_app(settings=None, provider=None):
         try:
             yield
         finally:
+            await app.state.voice.aclose()
             if runner:
                 runner.stopping.set()
             if task:
@@ -137,7 +143,12 @@ def create_app(settings=None, provider=None):
     @app.middleware("http")
     async def guards(request: Request, call_next):
         if request.method in {"POST", "PUT", "PATCH", "DELETE"}:
-            limit = 2 * 1024 * 1024 if request.url.path == "/api/chat/attachments" else 32_768
+            if request.url.path == "/api/chat/attachments":
+                limit = 2 * 1024 * 1024
+            elif request.url.path == "/api/voice/sessions":
+                limit = 96_000
+            else:
+                limit = 32_768
             body = bytearray()
             async for chunk in request.stream():
                 if len(body) + len(chunk) > limit:
@@ -153,7 +164,7 @@ def create_app(settings=None, provider=None):
                 "auth"
                 if request.url.path in {"/api/auth/register", "/api/auth/login"}
                 else "chat"
-                if request.url.path.startswith("/api/chat/")
+                if request.url.path.startswith(("/api/chat/", "/api/voice/"))
                 else None
             )
             if category:
@@ -208,6 +219,7 @@ def create_app(settings=None, provider=None):
     app.include_router(connection.router)
     app.include_router(chat.router)
     app.include_router(attachments.router)
+    app.include_router(voice.router)
     return app
 
 

@@ -165,6 +165,7 @@ def _image_clarification(run, origin, blockers, evidence):
             (Message.id == item.get("source_message_id"))
             & (Message.conversation == run.conversation_id)
             & (Message.role == "user")
+            & (Message.status == "final")
             & (Message.created_at <= run.message.created_at)
         )
         quote = item.get("quote")

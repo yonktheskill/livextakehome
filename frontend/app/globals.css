@@ -1317,3 +1317,52 @@ label {
   padding: 0.5rem;
   color: #111;
 }
+
+.voice-button {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 0.4rem;
+  padding: 0.5rem 0.7rem;
+  border-radius: 0.65rem;
+  font-size: 0.8rem;
+  color: #f5f6f8;
+}
+.voice-button:hover:not(:disabled) {
+  background: var(--selection);
+}
+.voice-button-end,
+.voice-button-muted {
+  color: #fff;
+  background: #c93645;
+}
+.voice-button-end:hover:not(:disabled),
+.voice-button-muted:hover:not(:disabled) {
+  background: #af2937;
+}
+.voice-button:disabled {
+  opacity: 0.45;
+}
+.voice-controls {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  flex-wrap: wrap;
+  margin-bottom: 0.65rem;
+  padding: 0.6rem 0.8rem;
+  border: 1px solid var(--gutter);
+  border-radius: 0.75rem;
+  font-size: 0.8rem;
+}
+.voice-controls > [role="status"] {
+  margin-right: auto;
+}
+.voice-controls small {
+  width: 100%;
+  color: var(--muted);
+}
+.voice-error {
+  font-size: 0.8rem;
+  color: var(--red);
+  margin: 0 0 0.5rem;
+}

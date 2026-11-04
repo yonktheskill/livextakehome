@@ -299,7 +299,11 @@ class Runner:
             msg, _ = Message.get_or_create(
                 conversation=run.conversation_id,
                 client_request_id=f"assistant:{run_id}",
-                defaults={"role": "assistant", "status": "partial"},
+                defaults={
+                    "role": "assistant",
+                    "status": "partial",
+                    "source": "voice_backend" if run.message.source == "voice" else "text",
+                },
             )
             # Tokens within one response must stay byte-for-byte intact. Separate
             # independent model responses (and confirmation prompts), not tokens.
@@ -314,7 +318,8 @@ class Runner:
         if not await query(checkpoint, run_id):
             raise Interrupted()
         pending = await query(authorized, run_id)
-        tools = definitions() + [
+        voice = await query(lambda: Run.get_by_id(run_id).message.source == "voice")
+        tools = definitions(voice=voice) + [
             {
                 "type": "function",
                 "function": {
@@ -533,6 +538,10 @@ class Runner:
                     excluded=covered_sources(messages + exchange),
                     state=state,
                 )
+                if call.name == "end_call" and result.get("status") == "ending":
+                    # No later tool in this batch may dispatch after hang-up was accepted.
+                    await query(finish, run_id, "interrupted", "run.interrupted", {})
+                    return
                 exchange.append(
                     {
                         "role": "tool",

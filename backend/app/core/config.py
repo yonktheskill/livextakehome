@@ -31,6 +31,14 @@ class Settings(BaseSettings):
     livex_codex_enabled: bool = False
     livex_codex_auth_home: str | None = None
 
+    # Voice is independent of the typed-chat provider and disabled until configured.
+    voice_enabled: bool = False
+    voice_api_key: str | None = None
+    voice_base_url: str = "https://api.openai.com/v1"
+    voice_model: str = "gpt-live-1"
+    voice_voice: str = "marin"
+    voice_max_seconds: int = Field(default=900, ge=30, le=3600)
+
     # Cal.com TLS trust; ambient HTTP proxies are still ignored.
     ssl_cert_file: str | None = None
     ssl_cert_dir: str | None = None

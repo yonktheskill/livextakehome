@@ -84,6 +84,39 @@ make smoke-containers # verify built images over real HTTP, offline
 
 Automated tests use temporary databases, fake providers, and mocked Cal.com HTTP. They do not send meetings, use the personal `.env`, or incur model charges. Provider-only SDK inspection may skip when its optional package is absent. Optional Git hooks: `uvx pre-commit install` (configuration is committed). See [frontend notes](frontend/README.md) for stream recovery behaviour and limitations.
 
+## Live voice
+
+Voice uses GPT-Live independently of `LLM_PROVIDER`; typed chat and delegated
+scheduling requests continue through the configured agent (Codex SDK in local
+development). Set `VOICE_ENABLED=true` and a backend-only `VOICE_API_KEY` in
+`.env.local`, then restart the backend. Optional settings are `VOICE_BASE_URL`
+(default `https://api.openai.com/v1`), `VOICE_MODEL` (`gpt-live-1`), `VOICE_VOICE`
+(`marin`) and `VOICE_MAX_SECONDS` (`900`). Never put the key in a `NEXT_PUBLIC_`
+variable. The gateway must support Live session creation and sideband WebSockets;
+a Chat Completions-compatible endpoint alone is insufficient.
+
+Use Start voice in the composer and allow microphone access on localhost or HTTPS.
+Both speakers' captions update the existing chat timeline, and saved transcripts
+become context for later typed messages. Mute disables microphone input; End voice
+releases the microphone and speaker. Sending a typed message ends the active voice
+session before submitting it through the normal chat route.
+
+Say "end call", "hang up" or "goodbye" to end voice. The agent also has an `end_call`
+tool. Once a booking succeeds and no other requests remain pending, voice finishes
+the confirmation/farewell and closes automatically. Further speech keeps the call
+open. The browser observes remote audio to allow playback to finish; conservative
+timeouts cover blocked playback or lost connections. Backend clarifications and
+their spoken captions share one reply; exact action-confirmation details appear
+inside that reply when required.
+
+Voice speech is played immediately without complete-response checks or a separate
+moderation call. Backend scheduling validation, authorization, dispatch and receipts
+still apply. Exact backend confirmation questions remain visible in chat. Transcript
+timestamps are approximate and do not establish which words were heard before an
+interruption. Audio recordings are not stored by this application; text transcripts
+share normal conversation retention. Live voice requires a separately billed API
+project key; the Codex account login does not supply it.
+
 ## Containers
 
 For containers, select OpenRouter and configure its project model/key, or use `make up LLM_PROVIDER=fake` for an offline demo. The production image excludes the optional native Codex SDK/login.
@@ -133,7 +166,7 @@ Credentials are filtered from external data, profile values, confirmations, rece
 
 ## Implementation status
 
-Frontend, backend, and provider milestones are implemented. Review findings have regression tests and fixes. Both Docker images build. Real HTTP two-container tests passed cookies/auth, proxying, dedupe, SSE/history, CSRF, restart persistence, and logout using explicit fake inference. Final checks passed 87 backend tests and 19 frontend tests, plus the 50-test provider suite with the optional SDK. A read-only Cal.com check using the supplied key could not establish a connection from this execution environment (no mutations were attempted). Live writes, signed-in model inference and browser visual verification remain unverified. The user's own preferred name is persisted; general contacts, screenshot input, other persistent preferences, and voice remain future work.
+Frontend, backend, and provider milestones are implemented. Review findings have regression tests and fixes. Both Docker images build. Real HTTP two-container tests passed cookies/auth, proxying, dedupe, SSE/history, CSRF, restart persistence, and logout using explicit fake inference. Final checks passed 87 backend tests and 19 frontend tests, plus the 50-test provider suite with the optional SDK. A read-only Cal.com check using the supplied key could not establish a connection from this execution environment (no mutations were attempted). Live writes, signed-in model inference and browser visual verification remain unverified. The user's own preferred name, private screenshot messages and live voice integration are implemented; general contacts and other persistent preferences remain future work. Voice transport access has a live connection smoke check; browser microphone/playback behavior still requires live verification.
 
 ## Agent diagnostics
 

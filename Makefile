@@ -23,7 +23,7 @@ dev:
 dev-backend:
 	cd backend && uv run $(BACKEND_EXTRAS) uvicorn app.main:app --reload --host 127.0.0.1 --port 8000 --no-access-log --no-proxy-headers
 dev-frontend:
-	env -u MASTER_SECRET -u MASTER_SECRET_PREVIOUS -u OPENROUTER_API_KEY -u LIVEX_CODEX_AUTH_HOME pnpm --dir frontend dev --port $(FRONTEND_PORT)
+	env -u MASTER_SECRET -u MASTER_SECRET_PREVIOUS -u OPENROUTER_API_KEY -u LIVEX_CODEX_AUTH_HOME -u VOICE_API_KEY pnpm --dir frontend dev --port $(FRONTEND_PORT)
 up:
 	docker compose --env-file .env.local up --build -d
 down:

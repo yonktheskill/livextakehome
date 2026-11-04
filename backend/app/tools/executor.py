@@ -40,6 +40,23 @@ class Executor:
         )
 
     async def execute(self, run_id, name, arguments):
+        if name == "end_call":
+
+            def end_call():
+                from app.db.models import VoiceSegment, VoiceSession
+                from app.db.repository import emit
+
+                run = Run.get_by_id(run_id)
+                segment = VoiceSegment.get_or_none(VoiceSegment.message == run.message_id)
+                if arguments or run.message.source != "voice" or not segment:
+                    return {"error": "end_call is only available for the current voice call."}
+                session = VoiceSession.get_by_id(segment.session_id)
+                if session.status != "active" or not checkpoint(run_id):
+                    return {"error": "Voice call has already ended or this request is stale."}
+                emit(run_id, "voice.end_requested", {"reason": "user_requested"})
+                return {"status": "ending"}
+
+            return await query(end_call)
         if name == "authorize_action":
             try:
                 return await query(authorize_action, run_id, arguments)
@@ -226,6 +243,7 @@ class Executor:
         if (
             source is None
             or source.role != "user"
+            or source.status != "final"
             or source.conversation_id != run.conversation_id
             or source.created_at > run.message.created_at
         ):
@@ -268,6 +286,7 @@ class Executor:
             later = Message.select().where(
                 (Message.conversation == run.conversation_id)
                 & (Message.role == "user")
+                & (Message.status == "final")
                 & (Message.created_at > source.created_at)
                 & (Message.created_at <= run.message.created_at)
             )

@@ -67,6 +67,7 @@ class Message(Base):
     created_at = FloatField(default=time.time, index=True)
     time_zone = CharField(default="UTC")
     status = CharField(default="final")
+    source = CharField(default="text")
     client_request_id = CharField(null=True)
 
     class Meta:
@@ -116,6 +117,38 @@ class Event(Base):
 
     class Meta:
         indexes = ((("run", "sequence"), True),)
+
+
+class VoiceSession(Base):
+    id = CharField(primary_key=True, default=uid)
+    conversation = ForeignKeyField(Conversation, on_delete="CASCADE")
+    client_request_id = CharField()
+    provider_id = CharField(null=True)
+    answer_sdp = TextField(default="")
+    status = CharField(default="starting")
+    created_at = FloatField(default=time.time)
+
+    class Meta:
+        indexes = ((("conversation", "client_request_id"), True),)
+
+
+class VoiceEvent(Base):
+    session = ForeignKeyField(VoiceSession, on_delete="CASCADE")
+    sequence = IntegerField()
+    kind = CharField()
+    payload = TextField()
+    provider_event_id = CharField(null=True)
+
+    class Meta:
+        indexes = ((("session", "sequence"), True), (("session", "provider_event_id"), True))
+
+
+class VoiceSegment(Base):
+    session = ForeignKeyField(VoiceSession, on_delete="CASCADE")
+    message = ForeignKeyField(Message, on_delete="CASCADE")
+    start_ms = IntegerField()
+    end_ms = IntegerField()
+    delegated = BooleanField(default=False)
 
 
 class BookingRequest(Base):
@@ -197,6 +230,9 @@ TABLES = [
     Extraction,
     Run,
     Event,
+    VoiceSession,
+    VoiceEvent,
+    VoiceSegment,
     BookingRequest,
     RequestInbox,
     Action,
