@@ -27,7 +27,7 @@ TYPE = {
 ARGS = {
     "event_type_id": 10,
     "start": "2026-11-06T06:00:00Z",
-    "duration_minutes": 35,
+    "duration_minutes": 44,
     "attendee": {"name": "Alice", "email": "alice@example.com", "time_zone": "Asia/Singapore"},
 }
 

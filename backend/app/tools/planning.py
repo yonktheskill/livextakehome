@@ -5,27 +5,23 @@ import uuid
 from datetime import UTC, datetime, timedelta
 
 from app.calcom.client import CalError, owned_booking, owned_type
+from app.tools.durations import CREATABLE_DURATIONS, duration, duration_plan
 
 
 def iso(value):
     return value.astimezone(UTC).isoformat().replace("+00:00", "Z")
 
 
-def duration(data, requested):
-    default = data.get("lengthInMinutes", data.get("length"))
-    choices = data.get("lengthInMinutesOptions") or [default]
-    choices = sorted({int(x) for x in choices if isinstance(x, (int, float)) and x > 0})
-    if not choices:
-        raise CalError("Event type does not declare a supported duration.")
-    requested = requested or default
-    possible = [x for x in choices if x >= requested]
-    if not possible:
-        raise CalError("No supported duration is long enough. Ask before creating a new type.")
-    return possible[0]
-
-
 async def get_type(client, type_id, owner):
     return owned_type(await client.request("GET", f"/v2/event-types/{type_id}"), owner)
+
+
+async def plan_booking_duration(client, args, owner):
+    # The agent selects semantically suitable types, but IDs and lengths come from live reads.
+    event_types = [
+        await get_type(client, type_id, owner) for type_id in dict.fromkeys(args.event_type_ids)
+    ]
+    return duration_plan(event_types, args.duration_minutes, args.maximum_minutes)
 
 
 async def get_booking(client, uid, owner):
@@ -56,6 +52,20 @@ def slot_exists(data, start):
 
 async def prepare(client, name, args, owner):
     if name == "create_event_type":
+        if args.requested_duration_minutes is not None:
+            plan = duration_plan([], args.requested_duration_minutes)
+            if args.duration_minutes != plan["effective_duration_minutes"]:
+                raise CalError(
+                    "Use plan_booking_duration: create the requested duration when allowed, "
+                    "otherwise the smallest larger creation choice."
+                )
+        if args.duration_minutes not in CREATABLE_DURATIONS:
+            plan = duration_plan([], args.duration_minutes)
+            raise CalError(
+                "Requested duration is outside the application's event-type creation choices. "
+                f"The next creatable duration is {plan['effective_duration_minutes']} minutes; "
+                "disclose the adjustment and propose that type instead."
+            )
         schedules = await client.request("GET", "/v2/schedules")
         defaults = [s for s in schedules if s.get("isDefault")]
         if len(defaults) != 1:
@@ -77,6 +87,7 @@ async def prepare(client, name, args, owner):
             {
                 "title": args.title,
                 "duration_minutes": args.duration_minutes,
+                "requested_duration_minutes": args.requested_duration_minutes,
                 "schedule_id": defaults[0]["id"],
                 "location": "Cal Video",
                 "minimum_notice_minutes": 60,
@@ -88,7 +99,7 @@ async def prepare(client, name, args, owner):
         if args.maximum_minutes and minutes > args.maximum_minutes:
             raise CalError("Supported duration exceeds your maximum; please clarify.")
         if args.explicit_end and args.start + timedelta(minutes=minutes) > args.explicit_end:
-            raise CalError("Rounded duration would exceed the explicit end; please clarify.")
+            raise CalError("Effective duration would exceed the explicit end; please clarify.")
         required = {
             f["slug"]
             for f in event_type.get("bookingFields", [])

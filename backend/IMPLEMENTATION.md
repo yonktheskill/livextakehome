@@ -73,8 +73,13 @@ Use explicit fake inference for offline UI checks, or configure OpenRouter model
   accept only an unambiguous plain yes/confirm response to one pending proposal.
   Changed details require another confirmation. Recurring/seated bookings are excluded.
 - Booking creation and rescheduling validate personal ownership and live slots.
-  Duration rounds upward within the selected live type; explicit end/maximum remains
-  a constraint. Rescheduling preserves duration and stores both original UID in inputs
+  `plan_booking_duration` prefers exact reuse, then exact creation using the application's
+  documented creation choices, then the smallest reusable/creatable larger duration.
+  A missing rounded type is created too (110 becomes 120). Implicit type creation still
+  requires confirmation. Slot/booking validation blocks a longer type when a shorter
+  one can be created; callers retain the original request separately from the effective
+  length. Explicit end/maximum remains a constraint. Rescheduling preserves duration
+  and stores both original UID in inputs
   and replacement UID in canonical results. Required questions are collected before
   dispatch; arbitrary bypass flags cannot enter the schemas.
 - Basic reusable types use the one default schedule and documented Cal Video default,

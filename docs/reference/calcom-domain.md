@@ -78,14 +78,14 @@ The user observed the following event-type duration choices (in minutes):
 [5, 20, 25, 30, 40, 45, 50, 60, 75, 80, 90, 120, 150, 180, 240, 300, 360, 420, 480]
 ```
 
-**Interpretation:** Treat this exact array as the application's **observed configured/UI choices**, *not* as a universal Cal.com API-wide duration limit. Other accounts, settings and API flows may offer different values. Notably, `15` is absent from the observed list although Cal.com's own documentation uses 15-minute examples.
+**Interpretation:** This array originated as **observed configured/UI choices**, not a universal Cal.com API-wide duration limit. The current application policy adopts it for creating new event types (`backend/app/tools/durations.py`). Existing types can still be reused at their live configured lengths outside this list, such as 15 minutes. Other accounts, settings and API flows may offer different values.
 
 **Agent policy for this integration:**
-- When asked to configure an event type using the observed choices, prefer only these values unless configuration is fetched and indicates otherwise.
+- For a new booking, call `plan_booking_duration` with the original duration and suitable live type IDs. Prefer exact reuse, then exact creation from the application choices, then the smallest larger reusable/creatable length. Create a missing rounded type too: 110 minutes becomes 120 if no exact type exists, even if 120 needs creation. Reusable type creation requires confirmation and does not itself book a slot.
 - When making a booking under a multiple-duration event type, `lengthInMinutes` may select a duration **that the event type actually allows**. Its presence does **not** give unrestricted arbitrary-length booking privileges.
 - If `lengthInMinutes` is omitted, the event type's default length applies.
 - Check available slots for the selected length before trying to book.
-- If a user requests a duration not offered, explain the limitation or request approval to modify/create an event type; **do not silently round the duration**.
+- Disclose rounding and preserve original requested minutes in planning, slot and booking calls. Never exceed explicit end times or maximums; clarify if no length fits. Schedule/API/permission failures do not justify assuming another duration can be created.
 - For dynamic multi-host bookings without a stored event type, Cal.com's docs describe a **different** limited set of allowed lengths: `15, 30, 45, 60, 90` minutes. Do not conflate with the user-observed array.
 
 Source: https://cal.com/docs/api-reference/v2/bookings/create-a-booking
