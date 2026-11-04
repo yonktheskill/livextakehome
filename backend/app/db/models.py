@@ -34,6 +34,7 @@ class User(Base):
     preferred_name = CharField(null=True, max_length=200)
     password_hash = TextField()
     time_zone = CharField(default="UTC")
+    time_zone_manual = BooleanField(default=False)
     created_at = FloatField(default=time.time)
 
 

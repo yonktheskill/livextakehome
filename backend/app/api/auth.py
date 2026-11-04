@@ -1,12 +1,13 @@
 import time
+from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
 from fastapi import APIRouter, HTTPException, Request, Response
 from peewee import IntegrityError
-from pydantic import BaseModel, EmailStr, Field
+from pydantic import BaseModel, EmailStr, Field, field_validator
 
 from app.core.security import digest, passwords, token, verify_password
 from app.db.database import query
-from app.db.models import Conversation, Session, User, db
+from app.db.models import Action, Conversation, Run, Session, User, db
 
 router = APIRouter(prefix="/api/auth")
 COOKIE = "cal_session"
@@ -15,6 +16,19 @@ COOKIE = "cal_session"
 class Credentials(BaseModel):
     email: EmailStr
     password: str = Field(min_length=10, max_length=256)
+
+
+class TimeZoneInput(BaseModel):
+    time_zone: str = Field(min_length=1, max_length=100)
+
+    @field_validator("time_zone")
+    @classmethod
+    def valid_time_zone(cls, value):
+        try:
+            ZoneInfo(value)
+        except (ZoneInfoNotFoundError, ValueError):
+            raise ValueError("Choose a valid IANA timezone.") from None
+        return value
 
 
 def public(user):
@@ -102,6 +116,33 @@ async def login(data: Credentials, request: Request, response: Response):
 @router.get("/me")
 async def me(request: Request):
     return public(await current(request))
+
+
+@router.patch("/me")
+async def update_me(data: TimeZoneInput, request: Request):
+    user = await current(request)
+
+    def persist():
+        with db.atomic("IMMEDIATE"):
+            saved = User.get_by_id(user.id)
+            if saved.time_zone != data.time_zone:
+                # A correction must invalidate plans based on the previous timezone.
+                conv = Conversation.get(Conversation.user == saved.id)
+                conv.revision += 1
+                conv.save()
+                Run.update(interrupted=True).where(
+                    (Run.conversation == conv) & Run.status.in_(["queued", "running"])
+                ).execute()
+                Action.update(state="superseded").where(
+                    Action.run.in_(Run.select(Run.id).where(Run.conversation == conv))
+                    & Action.state.in_(["prepared", "authorized", "awaiting_confirmation"])
+                ).execute()
+            saved.time_zone = data.time_zone
+            saved.time_zone_manual = True
+            saved.save(only=[User.time_zone, User.time_zone_manual])
+            return public(saved)
+
+    return await query(persist)
 
 
 @router.post("/logout", status_code=204)

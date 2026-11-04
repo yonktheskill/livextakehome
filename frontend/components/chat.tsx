@@ -5,14 +5,16 @@ import { ArrowDown, ArrowUp, BookOpen, LogOut, RefreshCw, Square } from "lucide-
 import { useAuth } from "./auth";
 import { api, ApiError, type Connection, type User } from "../lib/api";
 import { useConversation } from "../lib/use-conversation";
+import { messageTime } from "../lib/timezone";
 import { ConnectionDialog } from "./connection-dialog";
 import { ChatSidebar } from "./chat-sidebar";
 import { ActionReceipt, Welcome } from "./chat-content";
 import { SafeMarkdown } from "./markdown";
 import { MessageCopy } from "./message-copy";
 import { Brand } from "./brand";
+import { TimezonePicker } from "./timezone-picker";
 export function Chat({ user }: { user: User }) {
-  const { logout, refresh } = useAuth();
+  const { logout, refresh, updateTimeZone } = useAuth();
   const chat = useConversation(user.id, refresh);
   const [connection, setConnection] = useState<Connection | null>(null);
   const [connectionError, setConnectionError] = useState("");
@@ -86,7 +88,7 @@ export function Chat({ user }: { user: User }) {
         <header className="chat-header">
           <Brand className="mobile-brand" />
           <div className="header-actions">
-            <span className="timezone">{user.time_zone}</span>
+            <TimezonePicker value={user.time_zone} onChange={updateTimeZone} onUnauthorized={refresh} />
             <Button className="connection-pill" onClick={() => setDialog(true)}>
               <span className={`status-dot ${connection?.connected ? "" : "offline"}`} />
               {connection?.connected ? "Cal.com connected" : "Connect Cal.com"}
@@ -163,12 +165,7 @@ export function Chat({ user }: { user: User }) {
                       <div className="message-body">
                         <div className="message-label">
                           {message.role === "user" ? "You" : "HelpBook"}
-                          <span>
-                            {new Date(message.created_at).toLocaleTimeString([], {
-                              hour: "numeric",
-                              minute: "2-digit",
-                            })}
-                          </span>
+                          <span>{messageTime(message.created_at, user.time_zone)}</span>
                         </div>
                         <SafeMarkdown content={message.content} />
                         <MessageCopy content={message.content} />
