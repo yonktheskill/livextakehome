@@ -11,6 +11,7 @@ from app.db.models import (
     Message,
     Run,
     Trace,
+    User,
     db,
 )
 
@@ -55,7 +56,7 @@ def accept(user, content, request_id):
             conversation=conv,
             role="user",
             content=content,
-            time_zone=user.time_zone,
+            time_zone=User.get_by_id(user.id).time_zone,
             client_request_id=request_id,
         )
         pending = list(

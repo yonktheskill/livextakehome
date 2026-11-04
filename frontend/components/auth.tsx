@@ -8,6 +8,7 @@ const AuthContext = createContext<{
   refresh: () => Promise<void>;
   authenticate: (mode: "login" | "register", email: string, password: string) => Promise<void>;
   logout: () => Promise<void>;
+  updateTimeZone: (timeZone: string) => Promise<void>;
 } | null>(null);
 export function AuthProvider({ children }: { children: React.ReactNode }) {
   const [user, setUser] = useState<User | null>(null);
@@ -50,8 +51,15 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     await api("/auth/logout", { method: "POST" });
     setUser(null);
   }
+  async function updateTimeZone(timeZone: string) {
+    const updated = await api<User>("/auth/me", {
+      method: "PATCH",
+      body: JSON.stringify({ time_zone: timeZone }),
+    });
+    setUser((current) => (current?.id === updated.id ? updated : current));
+  }
   return (
-    <AuthContext.Provider value={{ user, loading, error, refresh, authenticate, logout }}>
+    <AuthContext.Provider value={{ user, loading, error, refresh, authenticate, logout, updateTimeZone }}>
       {children}
     </AuthContext.Provider>
   );

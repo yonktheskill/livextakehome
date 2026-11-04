@@ -5,13 +5,14 @@ import { ArrowDown, ArrowUp, BookOpen, RefreshCw, Square } from "lucide-react";
 import { useAuth } from "./auth";
 import { api, ApiError, type Connection, type User } from "../lib/api";
 import { useConversation } from "../lib/use-conversation";
+import { messageTime } from "../lib/timezone";
 import { ConnectionDialog } from "./connection-dialog";
 import { ChatHeader } from "./chat-header";
 import { ActionReceipt, Welcome } from "./chat-content";
 import { SafeMarkdown } from "./markdown";
 import { MessageCopy } from "./message-copy";
 export function Chat({ user }: { user: User }) {
-  const { logout, refresh } = useAuth();
+  const { logout, refresh, updateTimeZone } = useAuth();
   const chat = useConversation(user.id, refresh);
   const [connection, setConnection] = useState<Connection | null>(null);
   const [connectionError, setConnectionError] = useState("");
@@ -80,6 +81,8 @@ export function Chat({ user }: { user: User }) {
         loggingOut={loggingOut}
         onConnect={() => setDialog(true)}
         onSignOut={signOut}
+        onTimeZoneChange={updateTimeZone}
+        onUnauthorized={refresh}
       />
       <main className="chat-main">
         {(connectionError || accountError) && (
@@ -144,12 +147,7 @@ export function Chat({ user }: { user: User }) {
                       <div className="message-body">
                         <div className="message-label">
                           {message.role === "user" ? "You" : "HelpBook"}
-                          <span>
-                            {new Date(message.created_at).toLocaleTimeString([], {
-                              hour: "numeric",
-                              minute: "2-digit",
-                            })}
-                          </span>
+                          <span>{messageTime(message.created_at, user.time_zone)}</span>
                         </div>
                         <SafeMarkdown content={message.content} />
                         <MessageCopy content={message.content} />
@@ -157,7 +155,7 @@ export function Chat({ user }: { user: User }) {
                     </article>
                   ))}
                 {chat.receipts.map((receipt) => (
-                  <ActionReceipt key={receipt.action_id} receipt={receipt} />
+                  <ActionReceipt key={receipt.action_id} receipt={receipt} timeZone={user.time_zone} />
                 ))}
               </>
             )}

@@ -22,11 +22,11 @@ def initialize(path: str):
     with db.connection_context(), db.atomic("IMMEDIATE"):
         db.create_tables([SchemaVersion])
         version = SchemaVersion.select().order_by(SchemaVersion.version.desc()).first()
-        if version and version.version > 3:
+        if version and version.version > 4:
             raise RuntimeError("Database schema is newer than this application")
         if not version:
             db.create_tables(TABLES)
-            SchemaVersion.create(version=3)
+            SchemaVersion.create(version=4)
         elif version.version == 1:
             migrator = SqliteMigrator(db)
             migrate(
@@ -49,6 +49,13 @@ def initialize(path: str):
                 )
             )
             SchemaVersion.create(version=3)
+        if version and version.version < 4:
+            # Native ADD COLUMN retains foreign keys; the migrator's NOT NULL
+            # path rebuilds the user table, which has existing child records.
+            db.execute_sql(
+                'ALTER TABLE "user" ADD COLUMN "time_zone_manual" INTEGER NOT NULL DEFAULT 0'
+            )
+            SchemaVersion.create(version=4)
 
 
 async def query(fn, *args, **kwargs):

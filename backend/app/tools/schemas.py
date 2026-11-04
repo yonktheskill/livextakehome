@@ -1,8 +1,14 @@
 from datetime import datetime
-from typing import Literal
+from typing import Annotated, Literal
 from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
 from pydantic import BaseModel, ConfigDict, EmailStr, Field, field_validator, model_validator
+
+from app.tools.durations import CREATABLE_DURATIONS
+
+DURATION_DESCRIPTION = (
+    "Original duration requested by the user; do not replace with a rounded value."
+)
 
 
 class Arguments(BaseModel):
@@ -51,9 +57,21 @@ class EventType(Arguments):
     event_type_id: int = Field(gt=0)
 
 
+class PlanDuration(Arguments):
+    duration_minutes: int = Field(gt=0, le=1440, description=DURATION_DESCRIPTION)
+    event_type_ids: list[Annotated[int, Field(gt=0)]] = Field(
+        max_length=20,
+        description="IDs of suitable personal event types from live results; [] if none. "
+        "Respect a user-selected type and do not include unrelated templates.",
+    )
+    maximum_minutes: int | None = Field(default=None, gt=0, le=1440)
+
+
 class Slots(Range):
     event_type_id: int = Field(gt=0)
-    duration_minutes: int | None = Field(default=None, gt=0, le=1440)
+    duration_minutes: int | None = Field(
+        default=None, gt=0, le=1440, description=DURATION_DESCRIPTION
+    )
     booking_uid: str | None = Field(default=None, pattern=r"^[a-zA-Z0-9_-]+$")
 
 
@@ -75,7 +93,9 @@ class Attendee(Arguments):
 class CreateBooking(EventType):
     start: datetime
     attendee: Attendee
-    duration_minutes: int | None = Field(default=None, gt=0, le=1440)
+    duration_minutes: int | None = Field(
+        default=None, gt=0, le=1440, description=DURATION_DESCRIPTION
+    )
     explicit_end: datetime | None = None
     maximum_minutes: int | None = Field(default=None, gt=0)
     booking_fields: dict[str, str] = Field(default_factory=dict)
@@ -108,6 +128,12 @@ class Cancel(Booking):
 class CreateType(Arguments):
     title: str = Field(min_length=1, max_length=120)
     duration_minutes: int = Field(gt=0, le=1440)
+    requested_duration_minutes: int | None = Field(
+        default=None,
+        gt=0,
+        le=1440,
+        description="Original booking duration when creating a missing type.",
+    )
     description: str = Field(default="", max_length=1000)
 
 
@@ -117,6 +143,7 @@ SCHEMAS: dict[str, type[Arguments]] = {
     "get_booking": Booking,
     "list_event_types": Arguments,
     "get_event_type": EventType,
+    "plan_booking_duration": PlanDuration,
     "get_available_slots": Slots,
     "create_booking": CreateBooking,
     "reschedule_booking": Reschedule,
@@ -129,8 +156,23 @@ DESCRIPTIONS = {
     "Works without a Cal.com connection; can update an existing preferred name.",
     "cancel_booking": "Prepare exact single-booking cancellation; always asks user confirmation.",
     "create_event_type": "Propose reusable personal type using default schedule and Cal Video. "
-    "Implicit creation requires confirmation. Clear explicit creation can be authorized.",
-    "create_booking": "Book after live validation. Provide attendee and required fields.",
+    "Implicit creation requires confirmation. Clear explicit creation can be authorized. "
+    f"Application creation choices (minutes): {list(CREATABLE_DURATIONS)}. "
+    "Use plan_booking_duration before creating a missing booking type; preserve the original "
+    "booking length in requested_duration_minutes and use the effective length "
+    "in duration_minutes. "
+    "Creation alone does not book an appointment. Failures of schedule, permission or connection "
+    "are not evidence that a different duration can be created; report the blocker.",
+    "plan_booking_duration": "Resolve duration before availability or booking: reuse an exact "
+    "suitable type, else create the exact duration if allowed, else round up to the smallest "
+    "reusable or creatable duration. A rounded type may need creation too. "
+    "Examples: missing 30 creates 30 rather than using 40; missing 110 creates 120 even if "
+    "only 150 exists. Pass the original user duration and maximum_minutes, capped by any explicit "
+    "end interval. Respect selected types; clarify before switching. "
+    "Creation remains subject to schedule/API validation.",
+    "create_booking": "Book after live validation. Provide attendee and required fields. "
+    "Follow plan_booking_duration; create missing types first. Keep duration_minutes equal to "
+    "the original request, including when the selected type uses a rounded duration.",
     "reschedule_booking": "Move exact booking preserving duration; validate live slots first.",
 }
 

@@ -53,7 +53,7 @@ def change(user_id, identity=None, ciphertext="", label=""):
         if identity:
             conn.owner, conn.username = identity["id"], identity["username"]
             User.update(time_zone=identity.get("timeZone") or "UTC").where(
-                User.id == user_id
+                (User.id == user_id) & (User.time_zone_manual == False)  # noqa: E712
             ).execute()
         else:
             conn.owner, conn.username = 0, ""

@@ -7,6 +7,7 @@ All backend paths retain `/api` through the Next.js same-origin proxy. JSON erro
 - `GET /api/health` → `{status:"ok"}`.
 - `POST /api/auth/register` and `/api/auth/login`: `{email,password}` → `{id,email,time_zone,preferred_name}` and session cookie. Registration signs in. `preferred_name` is nullable and saved through chat when the user supplies their own form of address.
 - `GET /api/auth/me` → user object or 401. `POST /api/auth/logout` → 204.
+- `PATCH /api/auth/me`: `{time_zone}` (IANA timezone) → updated user object. The choice persists across sessions and takes precedence over the Cal.com timezone on reconnect. Changing it interrupts active runs and supersedes undispatched plans based on the old timezone; already dispatched actions may finish.
 - `GET /api/connection` → `{connected:boolean, label:string|null}` (masked only).
 - `PUT /api/connection`: `{api_key}` → masked connection status. `DELETE /api/connection` disconnects integration, not app account.
 - `GET /api/chat/history` → `{messages:[{id,role,content,created_at,status}], next_cursor:string|null}`; optional `before` cursor, chronological order within page.

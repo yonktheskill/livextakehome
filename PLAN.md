@@ -39,14 +39,14 @@ Select an existing suitable event type before booking. Gather attendee name/emai
 
 ### Duration selection
 
-The observed duration array in the supplied reference is **not a hardcoded app whitelist**. The later user decision is to follow live configuration, with explicit upward rounding.
+The application uses the reference's observed choices as its **new event-type creation policy**, not a universal Cal.com API limit. The source of truth for these choices is `app/tools/durations.py`. Existing types remain usable at their actual live default/selectable lengths, including lengths outside that list.
 
-1. Resolve semantically appropriate event types owned by this user; respect an explicitly selected type.
-2. Read their default and selectable lengths. Find the smallest supported length greater than or equal to the requested duration within that scope.
-3. Keep the requested start and expand the end; check slots for the full effective length. Say, for example, “35 minutes rounds up to the supported 45-minute option.”
-4. If rounding would violate an explicit end time, clarify rather than changing that end silently. Never round down or exceed a user's explicit maximum.
-5. If no suitable type/length exists, ask before creating a reusable type. Validate its proposed length against the creation API and account constraints; do not invent a universal list of legal lengths.
-6. Do not silently switch to a semantically different template just to obtain a convenient duration. A reschedule preserves duration unless the user requests a change.
+1. Resolve semantically appropriate personal event types, respecting an explicitly selected type. Read actual lengths rather than inferring duration from a title or slug.
+2. Call `plan_booking_duration` with the original requested minutes and suitable type IDs. Reuse an exact-duration type first; if missing, propose creation of the exact duration when it is in the application's creation choices.
+3. Only if the exact duration is neither reusable nor creatable, choose the smallest larger length across suitable live types and the application's creation choices. Reuse a type for that length if present; otherwise propose creating it. A 30-minute request with only a 40-minute type proposes creating 30; a 110-minute request with no exact type uses 120, creating a 120-minute type if missing, even when a longer existing type is available.
+4. Disclose rounding, preserve the start, and never exceed an explicit end or maximum. Pass a maximum to planning (including the interval implied by an explicit end) before proposing creation. If no length fits, clarify.
+5. Missing-type creation still requires exact confirmation, the default schedule and live API acceptance. Pass the effective duration and original booking duration separately to creation. A failed schedule lookup, permission/transport error or unknown outcome is not evidence that another duration will succeed; report the blocker without blindly creating alternatives.
+6. After confirmed creation, use the returned type ID and check slots before booking. Preserve the original requested `duration_minutes` in planning, slot and booking calls; backend validation computes the effective length and blocks skipping a shorter creatable type. Creation alone reserves no time. Do not silently switch an explicitly selected type or use a semantically different template. Rescheduling preserves duration.
 
 For selectable durations, the slots request uses `duration`; booking creation uses `lengthInMinutes`. The adapter translates the app's `duration_minutes` field. Availability is checked for the effective length, not the original shorter request. See [slots](https://cal.com/docs/api-reference/v2/slots/get-available-time-slots-for-an-event-type).
 
@@ -114,6 +114,7 @@ The following headers were checked against live docs on 2026-11-03. **Version pe
 | `get_booking` | `GET /v2/bookings/{bookingUid}` | `2026-02-25` | Exact target and current status; verify ownership. [Docs](https://cal.com/docs/api-reference/v2/bookings/get-a-booking) |
 | `list_event_types` | `GET /v2/event-types` | `2026-06-12` | Scope username to the connected owner; return suitable personal types. [Docs](https://cal.com/docs/api-reference/v2/event-types/list-event-types) |
 | `get_event_type` | `GET /v2/event-types/{eventTypeId}` | `2026-06-12` | Duration options, fields, locations, schedule, ownership. [Docs](https://cal.com/docs/api-reference/v2/event-types/get-an-event-type) |
+| `plan_booking_duration` | Live reads of suitable event-type IDs | `2026-06-12` | Exact reuse, exact creation, then smallest reusable/creatable rounded duration. No writes. |
 | `get_available_slots` | `GET /v2/slots` | `2024-09-04` | Type ID, UTC range, zone, optional duration and rescheduling UID. [Docs](https://cal.com/docs/api-reference/v2/slots/get-available-time-slots-for-an-event-type) |
 | `create_booking` | `POST /v2/bookings` | `2026-02-25` | Start, type ID, attendee, required fields, optional supported length/location. [Docs](https://cal.com/docs/api-reference/v2/bookings/create-a-booking) |
 | `reschedule_booking` | `POST /v2/bookings/{bookingUid}/reschedule` | `2026-02-25` | UID and new start; preserve other properties by default. [Docs](https://cal.com/docs/api-reference/v2/bookings/reschedule-a-booking) |
@@ -253,8 +254,9 @@ arbitrary external calendar events are outside this app. Do not call their APIs.
 For ordinary meetings, use Event Types + Slots + Bookings. Ask if “event” is ambiguous.
 Live tool results determine ownership, IDs, durations, availability, and booking state.
 Use the supplied current time and user's IANA zone; preserve original request dates.
-Round requested duration upward only to an appropriate live supported length, explain
-the adjustment, and never violate an explicit end time or maximum. Do not invent IDs.
+Plan duration: reuse an exact suitable type, else create the exact length if allowed,
+else round up to the smallest reusable/creatable length, creating that type if missing.
+Explain rounding and never violate an explicit end time or maximum. Do not invent IDs.
 Execute clear bookings/reschedules when all required details are resolved. Ask before
 creating a missing event type. Cancel only the exact booking confirmed by the user.
 Never bypass conflict checks, booking limits, or other restrictions.
@@ -353,6 +355,6 @@ Product decisions are settled. Live-account verification remains separate from t
 
 Implementation acceptance: an authenticated user can connect their key, list/create/cancel/reschedule bookings, create an event type, and correct a prior request conversationally. Replies stream and survive reload; tenant boundaries and keys remain protected; uncertain writes never trigger blind duplicate requests; history compacts without losing active targets; documented Make commands and automated tests work from a clean checkout. Cal Events and future features remain excluded from this acceptance scope.
 
-Source basis: the supplied `README calcom.md` challenge and `cal_com_agent_reference.md`, live official Cal.com endpoint docs linked above, and the official provider/library/security docs. The user's live-duration and rounding decisions supersede the reference's observed-duration guidance. Account-specific behaviour, creation constraints, Codex integration parity, and proxy streaming still require the targeted implementation checks identified in this plan.
+Source basis: the supplied `README calcom.md` challenge and `cal_com_agent_reference.md`, live official Cal.com endpoint docs linked above, and the official provider/library/security docs. The current user-approved duration policy is exact reuse, exact creation, then rounding with creation of a missing rounded type. Account-specific behaviour, creation constraints, Codex integration parity, and proxy streaming still require the targeted implementation checks identified in this plan.
 
 Verified implementation milestones: accounts and encrypted connections; Cal.com tool validation; durable runs/SSE; atomic dispatch and canonical receipts; estimated-budget context and sanitized tool traces; frontend; isolated opt-in Codex adapter; CI/Make/Compose. Final offline checks: 87 backend tests, 19 frontend tests, 50 provider tests with the optional SDK, and real HTTP two-container smoke tests. Live Cal.com connectivity could not be established from the execution environment; no live mutations or signed-in model inference were performed. Unknown writes remain blocked pending operator reconciliation. Contacts, images, voice and persistent preferences remain future scope.

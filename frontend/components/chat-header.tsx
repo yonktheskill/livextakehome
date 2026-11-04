@@ -1,8 +1,9 @@
 "use client";
 import { Button, Menu, MenuButton, MenuItem, MenuItems } from "@headlessui/react";
-import { ChevronDown, Globe2, KeyRound, LogOut } from "lucide-react";
+import { ChevronDown, KeyRound, LogOut } from "lucide-react";
 import type { Connection, User } from "../lib/api";
 import { Brand } from "./brand";
+import { TimezonePicker } from "./timezone-picker";
 
 export function ChatHeader({
   user,
@@ -10,22 +11,22 @@ export function ChatHeader({
   loggingOut,
   onConnect,
   onSignOut,
+  onTimeZoneChange,
+  onUnauthorized,
 }: {
   user: User;
   connection: Connection | null;
   loggingOut: boolean;
   onConnect: () => void;
   onSignOut: () => Promise<void>;
+  onTimeZoneChange: (timeZone: string) => Promise<void>;
+  onUnauthorized: () => void;
 }) {
   return (
     <header className="chat-header">
       <Brand />
       <div className="header-actions">
-        <span className="timezone" title={`Timezone: ${user.time_zone}`}>
-          <Globe2 size={16} aria-hidden="true" />
-          <span className="sr-only">Timezone: </span>
-          <span className="timezone-value">{user.time_zone}</span>
-        </span>
+        <TimezonePicker value={user.time_zone} onChange={onTimeZoneChange} onUnauthorized={onUnauthorized} />
         <Menu>
           <MenuButton className="account-button" aria-label={`User menu for ${user.email}`}>
             <span className="avatar" aria-hidden="true">

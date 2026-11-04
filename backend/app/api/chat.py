@@ -70,6 +70,8 @@ async def history(request: Request, before: str | None = None):
         )
         return {
             "receipts": [receipt(a) for a in receipts],
+            # Canonical action messages anchor durable receipts and remain internal.
+            # Render their structured cards instead of duplicate raw JSON in chat.
             "messages": [
                 {
                     "id": m.id,
@@ -79,6 +81,7 @@ async def history(request: Request, before: str | None = None):
                     "status": m.status,
                 }
                 for m in reversed(page)
+                if not (m.client_request_id or "").startswith("action:")
             ],
             "next_cursor": page[-1].id if has_more else None,
         }

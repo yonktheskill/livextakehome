@@ -50,6 +50,39 @@ describe("chat composer controls", () => {
     return screen.findAllByRole("button", { name: "Copy message" });
   }
 
+  it("passes the account timezone to receipts restored from history", async () => {
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async (url: string) => {
+        if (url.endsWith("/history"))
+          return json({
+            messages: [],
+            next_cursor: null,
+            receipts: [
+              {
+                action_id: "booking-action",
+                kind: "create_booking",
+                summary: "Cal.com returned an action result; inspect its status.",
+                details: {
+                  status: "accepted",
+                  start: "2026-11-06T04:00:00Z",
+                  end: "2026-11-06T04:40:00Z",
+                  booking_uid: "confirmed-booking",
+                },
+              },
+            ],
+          });
+        if (url.endsWith("/connection")) return json({ connected: true, label: "Connected" });
+        throw new Error(`Unexpected request: ${url}`);
+      }),
+    );
+    render(<Chat user={{ ...user, time_zone: "Asia/Singapore" }} />);
+    expect(await screen.findByText("Friday, 06-11-2026, 12:00 Asia/Singapore")).toBeInTheDocument();
+    expect(screen.getByText("Friday, 06-11-2026, 12:40 Asia/Singapore")).toBeInTheDocument();
+    expect(screen.getByText("confirmed-booking")).toBeInTheDocument();
+    expect(screen.queryByText(/Action receipt \(/)).not.toBeInTheDocument();
+  });
+
   it("copies each user and agent message verbatim with independent feedback", async () => {
     const writeText = vi.fn().mockResolvedValue(undefined);
     Object.defineProperty(navigator, "clipboard", { configurable: true, value: { writeText } });

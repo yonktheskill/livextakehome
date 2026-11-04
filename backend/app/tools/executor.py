@@ -11,7 +11,8 @@ from app.db.database import query
 from app.db.dispatch import StalePreparation, prepare_action, settle
 from app.db.models import Action, Connection, Run, User, db
 from app.db.repository import checkpoint, claim, emit
-from app.tools.planning import duration, get_booking, get_type, prepare, slots
+from app.tools.durations import duration
+from app.tools.planning import get_booking, get_type, plan_booking_duration, prepare, slots
 from app.tools.schemas import SCHEMAS, SavePreferredName
 
 
@@ -58,6 +59,7 @@ class Executor:
                 "get_booking",
                 "list_event_types",
                 "get_event_type",
+                "plan_booking_duration",
                 "get_available_slots",
             }:
                 return await self.read(client, name, args, conn)
@@ -203,6 +205,8 @@ class Executor:
             return await get_booking(client, args.booking_uid, conn.owner)
         if name == "get_event_type":
             return await get_type(client, args.event_type_id, conn.owner)
+        if name == "plan_booking_duration":
+            return await plan_booking_duration(client, args, conn.owner)
         if name == "list_event_types":
             result = await client.request(
                 "GET", "/v2/event-types", params={"username": conn.username}
