@@ -16,6 +16,19 @@ export async function prepareImage(file: File): Promise<Blob> {
   const bytes = new Uint8Array(await file.arrayBuffer());
   const view = new DataView(bytes.buffer, bytes.byteOffset, bytes.byteLength);
   const tag = (offset: number) => String.fromCharCode(...bytes.subarray(offset, offset + 4));
+  const hasSignature = (signature: number[]) => signature.every((value, index) => bytes[index] === value);
+  const detectedType = hasSignature([0xff, 0xd8, 0xff])
+    ? "image/jpeg"
+    : hasSignature([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a])
+      ? "image/png"
+      : bytes.length >= 12 && tag(0) === "RIFF" && tag(8) === "WEBP"
+        ? "image/webp"
+        : null;
+  if (!detectedType || detectedType !== file.type)
+    throw new Error(
+      "Image contents do not match a supported JPEG, PNG, or WebP file. Attach an original static image.",
+    );
+
   let animated = false;
   if (file.type === "image/png") {
     for (let offset = 8; offset + 12 <= bytes.length; ) {

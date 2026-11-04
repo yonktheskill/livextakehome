@@ -6,8 +6,13 @@ import { MessageImages } from "../components/message-images";
 
 const authorized = () => {};
 const json = (value: unknown) => new Response(JSON.stringify(value));
-const file = (type: string, bytes = "static") =>
-  ({ type, size: bytes.length, arrayBuffer: async () => new TextEncoder().encode(bytes).buffer }) as File;
+const PNG_SIGNATURE = "\x89PNG\r\n\x1a\n";
+const file = (type: string, bytes = PNG_SIGNATURE) =>
+  ({
+    type,
+    size: bytes.length,
+    arrayBuffer: async () => Uint8Array.from(bytes, (character) => character.charCodeAt(0)).buffer,
+  }) as File;
 
 afterEach(() => {
   vi.restoreAllMocks();
@@ -23,12 +28,21 @@ describe("image processing", () => {
     await expect(prepareImage({ type: "image/png", size: 10 * 1024 * 1024 + 1 } as File)).rejects.toThrow(
       "10 MiB",
     );
-    await expect(prepareImage(file("image/png", "12345678\x00\x00\x00\x08acTLanimation"))).rejects.toThrow(
-      "Animated",
-    );
+    await expect(
+      prepareImage(file("image/png", PNG_SIGNATURE + "\x00\x00\x00\x08acTLanimation")),
+    ).rejects.toThrow("Animated");
     await expect(prepareImage(file("image/webp", "RIFF1234WEBPANIM\x00\x00\x00\x00"))).rejects.toThrow(
       "Animated",
     );
+    expect(decode).not.toHaveBeenCalled();
+  });
+  it("rejects GIF disguises and supported MIME mismatches before decoding", async () => {
+    const decode = vi.fn();
+    vi.stubGlobal("createImageBitmap", decode);
+    await expect(prepareImage(file("image/png", "GIF89a..."))).rejects.toThrow("contents do not match");
+    await expect(prepareImage(file("image/webp", "GIF87a..."))).rejects.toThrow("contents do not match");
+    await expect(prepareImage(file("image/jpeg", PNG_SIGNATURE))).rejects.toThrow("contents do not match");
+    await expect(prepareImage(file("image/png", "\xff\xd8\xff..."))).rejects.toThrow("contents do not match");
     expect(decode).not.toHaveBeenCalled();
   });
   it("asks to crop long screenshots instead of silently making their text tiny", async () => {
