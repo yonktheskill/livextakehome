@@ -6,14 +6,16 @@ from pathlib import Path
 
 from openai_codex import Codex, CodexConfig
 
+from app.core.config import Settings
+
 
 def main():
-    configured = os.environ.get("LIVEX_CODEX_AUTH_HOME", "")
-    home = Path(configured)
-    if not configured or not home.is_absolute():
+    configured = Settings().livex_codex_auth_home
+    if not configured or not Path(configured).is_absolute():
         raise SystemExit(
             "Set LIVEX_CODEX_AUTH_HOME to a dedicated absolute directory first."
         )
+    home = Path(configured)
     home.mkdir(mode=0o700, parents=True, exist_ok=True)
     os.chmod(home, 0o700)
     runtime = distribution("openai-codex-cli-bin")

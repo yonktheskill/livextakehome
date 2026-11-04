@@ -1,6 +1,7 @@
 import json
 import re
 from datetime import datetime
+from functools import partial
 
 from pydantic import ValidationError
 
@@ -29,9 +30,11 @@ class UnknownOutcome(Exception):
 
 
 class Executor:
-    def __init__(self, vault, client_factory=CalClient):
+    def __init__(self, vault, client_factory=None, *, settings=None):
         self.vault = vault
-        self.client_factory = client_factory
+        self.client_factory = (
+            client_factory if client_factory is not None else partial(CalClient, settings=settings)
+        )
 
     async def execute(self, run_id, name, arguments):
         if name not in SCHEMAS:

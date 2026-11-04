@@ -61,6 +61,6 @@ smoke-containers:
 setup-codex:
 	uv sync --project backend --extra codex --python 3.13
 codex-login:
-	cd backend && uv run --extra codex python ../scripts/codex_login.py
+	cd backend && PYTHONPATH=. uv run --extra codex python ../scripts/codex_login.py
 test-codex:
 	cd backend && uv run --extra codex pytest -q tests/test_providers*.py

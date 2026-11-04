@@ -3,7 +3,14 @@
 from .base import Provider, ProviderError
 
 
-def create_provider(name: str, model: str | None = None, api_key: str | None = None) -> Provider:
+def create_provider(
+    name: str,
+    model: str | None = None,
+    api_key: str | None = None,
+    *,
+    codex_enabled: bool = False,
+    codex_auth_home: str | None = None,
+) -> Provider:
     if name == "fake":
         from .fake import FakeProvider
 
@@ -19,5 +26,5 @@ def create_provider(name: str, model: str | None = None, api_key: str | None = N
             raise ProviderError(
                 "Codex development provider does not accept API keys", code="configuration"
             )
-        return CodexProvider(model=model)
+        return CodexProvider(model=model, enabled=codex_enabled, auth_home=codex_auth_home)
     raise ProviderError("Unknown provider name", code="configuration")

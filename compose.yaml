@@ -1,14 +1,14 @@
 services:
   backend:
     build: ./backend
+    # Forward the complete shared configuration, including runner/debug/context flags.
+    env_file:
+      - .env.local
     environment:
       MASTER_SECRET: ${MASTER_SECRET:?Run make init-dev and configure .env.local}
       DATABASE_PATH: /app/data/app.sqlite3
-      PUBLIC_ORIGIN: ${PUBLIC_ORIGIN:-http://localhost:3002}
-      COOKIE_SECURE: ${COOKIE_SECURE:-false}
+      # Preserve `make up LLM_PROVIDER=fake` without duplicating settings defaults.
       LLM_PROVIDER: ${LLM_PROVIDER:-codex}
-      LLM_MODEL: ${LLM_MODEL:-}
-      OPENROUTER_API_KEY: ${OPENROUTER_API_KEY:-}
     volumes:
       - backend-data:/app/data
     expose:

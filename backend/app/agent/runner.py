@@ -27,7 +27,7 @@ class Runner:
 
     def __init__(self, settings, vault, provider):
         self.settings, self.provider = settings, provider
-        self.executor = Executor(vault)
+        self.executor = Executor(vault, settings=settings)
         self.stopping = asyncio.Event()
 
     async def supervise(self):

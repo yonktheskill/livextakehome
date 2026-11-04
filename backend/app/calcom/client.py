@@ -1,9 +1,10 @@
 """Narrow Cal.com HTTP transport. No raw bodies/exceptions escape to model or browser."""
 
-import os
 import ssl
 
 import httpx
+
+from app.core.config import Settings
 
 VERSIONS = {
     "bookings": "2026-02-25",
@@ -21,9 +22,10 @@ class CalError(Exception):
 
 
 class CalClient:
-    def __init__(self, key: str, transport=None):
+    def __init__(self, key: str, transport=None, *, settings: Settings | None = None):
         # Honor configured CA roots without enabling ambient HTTP(S) proxies.
-        cafile, capath = os.getenv("SSL_CERT_FILE"), os.getenv("SSL_CERT_DIR")
+        settings = settings if settings is not None else Settings()
+        cafile, capath = settings.ssl_cert_file, settings.ssl_cert_dir
         verify = (
             ssl.create_default_context(cafile=cafile, capath=capath) if cafile or capath else True
         )

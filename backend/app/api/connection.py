@@ -70,7 +70,7 @@ async def get_connection(request: Request):
 @router.put("")
 async def connect(data: KeyInput, request: Request):
     user = await current(request)
-    client = CalClient(data.api_key)
+    client = CalClient(data.api_key, settings=request.app.state.settings)
     try:
         identity = await client.request("GET", "/v2/me")
         if not isinstance(identity.get("id"), int) or not identity.get("username"):

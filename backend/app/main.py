@@ -31,15 +31,14 @@ def create_app(settings=None, provider=None):
                 from app.providers.factory import create_provider
 
                 if settings.llm_provider == "codex":
-                    import os
                     from importlib.metadata import PackageNotFoundError, version
                     from pathlib import Path
 
                     from app.providers.codex import SDK_VERSION
 
-                    home = os.getenv("LIVEX_CODEX_AUTH_HOME", "")
+                    home = settings.livex_codex_auth_home
                     if (
-                        os.getenv("LIVEX_CODEX_ENABLED") != "1"
+                        not settings.livex_codex_enabled
                         or not settings.llm_model
                         or not home
                         or not Path(home).is_absolute()
@@ -61,6 +60,8 @@ def create_app(settings=None, provider=None):
                         api_key=settings.openrouter_api_key
                         if settings.llm_provider == "openrouter"
                         else None,
+                        codex_enabled=settings.livex_codex_enabled,
+                        codex_auth_home=settings.livex_codex_auth_home,
                     )
                 except Exception:
                     raise RuntimeError(

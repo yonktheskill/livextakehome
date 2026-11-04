@@ -214,14 +214,13 @@ class CodexProvider:
         self,
         model: str | None = None,
         *,
-        enabled: bool | None = None,
+        enabled: bool = False,
         auth_home: str | None = None,
         limits: ProviderLimits | None = None,
     ):
         self.model = model
-        self.enabled = enabled if enabled is not None else os.getenv("LIVEX_CODEX_ENABLED") == "1"
-        configured_home = auth_home or os.getenv("LIVEX_CODEX_AUTH_HOME")
-        self.auth_home = Path(configured_home) if configured_home else None
+        self.enabled = enabled
+        self.auth_home = Path(auth_home) if auth_home else None
         self.limits = limits or ProviderLimits()
         self._clients: set = set()
         self._closed = False

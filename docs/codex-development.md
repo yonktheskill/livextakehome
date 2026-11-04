@@ -51,13 +51,16 @@ only authenticates; it does not start inference. The runtime writes its account
 login file in that directory. Protect it like a credential. Do not put Cal.com
 keys, API keys, project configuration, MCP definitions or skills there.
 
-Enable the factory path explicitly in your backend process:
+Configure Codex alongside the other settings in `.env.local` (export these values
+explicitly instead when starting the backend without Make):
 
 ```sh
 export LIVEX_CODEX_ENABLED=1
 export LIVEX_CODEX_AUTH_HOME=/absolute/private/livex-codex-login
 ```
 
+Startup reads these through `app.core.config.Settings` and passes them explicitly
+to the provider factory. The factory and adapter do not read environment variables.
 Select provider `codex` using the application's existing provider setting and
 supply an explicit account-supported model. The adapter does not choose one.
 Alternatively construct `CodexProvider(model, enabled=True, auth_home=absolute_path)`.

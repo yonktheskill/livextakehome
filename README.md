@@ -13,6 +13,16 @@ make init-dev
 
 `init-dev` creates a private `.env.local` with a newly generated encryption key. It never reads or changes the existing `.env`, and refuses to overwrite an existing configuration. Keep this master key backed up separately from the database; losing it prevents decrypting saved Cal.com keys.
 
+All feature flags and runtime settings are configured together in `.env.local`.
+[`.env.example`](.env.example) is the complete, grouped template used by `init-dev`;
+[`Settings`](backend/app/core/config.py) defines backend types, validation and defaults.
+This includes `MAX_CONCURRENT_RUNS`, `RUNNER_ENABLED`, `LIVEX_CODEX_ENABLED`,
+`DEBUG_API`, provider credentials, context budgets and optional TLS trust settings.
+Make explicitly exports this file, and Compose passes it to the backend container.
+The backend itself reads only its supplied environment; explicit `Settings(...)`
+values override that environment. Restart the backend to apply changes. For an
+existing `.env.local`, copy any additional settings you need from the template.
+
 For account-backed development, `init-dev` selects Codex and a dedicated login directory outside this repository. Complete sign-in privately:
 
 ```sh
