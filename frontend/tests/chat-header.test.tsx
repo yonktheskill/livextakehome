@@ -50,7 +50,7 @@ describe("topbar account controls", () => {
     render(<Chat user={user} />);
     const header = within(screen.getByRole("banner"));
     expect(header.getByRole("link", { name: "HelpBook" })).toHaveAttribute("href", "/");
-    expect(header.getByText(user.time_zone)).toBeInTheDocument();
+    expect(header.getByText("UTC+08:00")).toBeInTheDocument();
     expect(header.getByRole("button", { name: `User menu for ${user.email}` })).toHaveAttribute(
       "aria-expanded",
       "false",

@@ -27,11 +27,6 @@ describe("timezone dropdown", () => {
         disconnect() {}
       },
     );
-    vi.spyOn(Intl, "supportedValuesOf").mockReturnValue([
-      "America/New_York",
-      "Asia/Kolkata",
-      "Asia/Singapore",
-    ]);
   });
   afterEach(() => {
     for (const [name, descriptor] of [
@@ -99,24 +94,29 @@ describe("timezone dropdown", () => {
     fireEvent.change(composer, { target: { value: "Keep my draft" } });
     const { trigger, search } = await open();
     expect(document.querySelector("select")).toBeNull();
-    expect(screen.getByRole("menuitemradio", { name: "UTC" })).toHaveAttribute("aria-checked", "true");
-    fireEvent.change(search, { target: { value: "Asia" } });
+    expect(screen.getByRole("menuitemradio", { name: /^UTC\+00:00 / })).toHaveAttribute(
+      "aria-checked",
+      "true",
+    );
+    const [first, second] = screen.getAllByRole("menuitemradio");
     fireEvent.keyDown(search, { key: "ArrowDown" });
-    const kolkata = screen.getByRole("menuitemradio", { name: "Asia/Kolkata" });
-    const singapore = screen.getByRole("menuitemradio", { name: "Asia/Singapore" });
-    expect(kolkata).toHaveFocus();
-    fireEvent.keyDown(kolkata, { key: "ArrowDown" });
-    await waitFor(() => expect(singapore).toHaveFocus());
-    fireEvent.keyDown(singapore, { key: "ArrowUp" });
-    await waitFor(() => expect(kolkata).toHaveFocus());
-    fireEvent.keyDown(kolkata, { key: "ArrowDown" });
-    await waitFor(() => expect(singapore).toHaveFocus());
+    expect(first).toHaveFocus();
+    fireEvent.keyDown(first, { key: "ArrowDown" });
+    await waitFor(() => expect(second).toHaveFocus());
+    fireEvent.keyDown(second, { key: "ArrowUp" });
+    await waitFor(() => expect(first).toHaveFocus());
+    search.focus();
+    fireEvent.change(search, { target: { value: "singapore" } });
+    expect(screen.getAllByRole("menuitemradio")).toHaveLength(1);
+    const singapore = screen.getByRole("menuitemradio", { name: "UTC+08:00 Hong Kong, Beijing, Singapore" });
+    fireEvent.keyDown(search, { key: "ArrowDown" });
+    expect(singapore).toHaveFocus();
     fireEvent.keyDown(singapore, { key: "Enter" });
     expect(await screen.findByRole("status")).toHaveTextContent("Saving timezone…");
     expect(trigger).toHaveTextContent("UTC");
     expect(fetcher).toHaveBeenCalledWith(
       "/api/auth/me",
-      expect.objectContaining({ method: "PATCH", body: JSON.stringify({ time_zone: "Asia/Singapore" }) }),
+      expect.objectContaining({ method: "PATCH", body: JSON.stringify({ time_zone: "Asia/Hong_Kong" }) }),
     );
     await act(async () => resolve(json({ ...user, time_zone: "Asia/Singapore" })));
     await waitFor(() => expect(screen.queryByRole("menu")).not.toBeInTheDocument());
@@ -142,7 +142,9 @@ describe("timezone dropdown", () => {
     await start(save);
     const trigger = screen.getByRole("button", { name: "Change timezone, currently UTC" });
     fireEvent.pointerDown(trigger, { button: 0, ctrlKey: false });
-    const singapore = await screen.findByRole("menuitemradio", { name: "Asia/Singapore" });
+    const singapore = await screen.findByRole("menuitemradio", {
+      name: "UTC+08:00 Hong Kong, Beijing, Singapore",
+    });
     fireEvent.click(singapore);
     expect(await screen.findByRole("alert")).toHaveTextContent("Unable to save. Try again.");
     expect(trigger).toHaveTextContent("UTC");
@@ -173,9 +175,30 @@ describe("timezone dropdown", () => {
     await start(save, { ...user, time_zone: "Invalid/Timezone" });
     const trigger = screen.getByRole("button", { name: "Change timezone, currently Invalid/Timezone" });
     fireEvent.pointerDown(trigger, { button: 0, ctrlKey: false });
-    fireEvent.click(await screen.findByRole("menuitemradio", { name: "Asia/Singapore" }));
+    fireEvent.click(
+      await screen.findByRole("menuitemradio", { name: "UTC+08:00 Hong Kong, Beijing, Singapore" }),
+    );
     expect(
       await screen.findByRole("button", { name: "Change timezone, currently Asia/Singapore" }),
     ).toBeVisible();
+  });
+
+  it("shows a single checked offset for an existing region and preserves that region on selection", async () => {
+    const save = vi.fn(async () => json({ ...user, time_zone: "Asia/Singapore" }));
+    const fetcher = await start(save, { ...user, time_zone: "Asia/Singapore" });
+    fireEvent.pointerDown(screen.getByRole("button", { name: "Change timezone, currently Asia/Singapore" }), {
+      button: 0,
+      ctrlKey: false,
+    });
+    const group = await screen.findByRole("menuitemradio", {
+      name: "UTC+08:00 Hong Kong, Beijing, Singapore",
+    });
+    expect(group).toHaveAttribute("aria-checked", "true");
+    fireEvent.click(group);
+    await waitFor(() => expect(save).toHaveBeenCalledTimes(1));
+    expect(fetcher).toHaveBeenCalledWith(
+      "/api/auth/me",
+      expect.objectContaining({ method: "PATCH", body: JSON.stringify({ time_zone: "Asia/Singapore" }) }),
+    );
   });
 });
