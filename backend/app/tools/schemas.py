@@ -192,7 +192,8 @@ DESCRIPTIONS = {
     "Ambiguous target or scope requires focused clarification; no repeated permission after "
     "clear authorization. All attendees and seats are included.",
     "create_event_type": "Create a reusable personal type using the live default schedule "
-    "and connected default conferencing app. Implicit creation requires confirmation; clear "
+    "and default conferencing app (built-in Cal Video when no default is saved). "
+    "Implicit creation requires confirmation; clear "
     "explicit creation can be authorized, including compound requests. Accept positive minute "
     "lengths; no fixed UI whitelist. Preserve the original requested_duration_minutes when "
     "creating a missing booking type. Creation alone does not book an appointment. API errors "

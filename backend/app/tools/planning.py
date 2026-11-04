@@ -60,6 +60,10 @@ def slot_exists(data, start):
 async def default_location(client):
     default = await client.request("GET", "/v2/conferencing/default")
     slug = default.get("appSlug") if isinstance(default, dict) else None
+    # Cal.com uses built-in Cal Video when no account default is saved. The API
+    # may omit data entirely, leaving the success envelope after client unwrapping.
+    if default is None or default in ({}, {"status": "success"}):
+        slug = "cal-video"
     supported = {
         "daily-video": ("cal-video", "Cal Video", None),
         "cal-video": ("cal-video", "Cal Video", None),
@@ -67,7 +71,7 @@ async def default_location(client):
         "zoom": ("zoom", "Zoom", "zoom_video"),
         "office365-video": ("office365-video", "Microsoft Teams", "office365_video"),
     }
-    if slug not in supported:
+    if not isinstance(slug, str) or slug not in supported:
         raise CalError("Ask the user to set one supported default conferencing app in Cal.com.")
     integration, label, credential_type = supported[slug]
     if credential_type:

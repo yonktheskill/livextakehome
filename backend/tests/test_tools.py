@@ -1,3 +1,4 @@
+import json
 from uuid import uuid4
 
 import httpx
@@ -34,7 +35,7 @@ ARGS = {
 }
 
 
-def fixture_executor(vault, posts, *, timeout=False, booking=None):
+def fixture_executor(vault, posts, *, timeout=False, booking=None, conferencing_response=None):
     async def handler(request):
         path = request.url.path
         if request.method == "POST":
@@ -54,6 +55,8 @@ def fixture_executor(vault, posts, *, timeout=False, booking=None):
             assert request.headers["cal-api-version"] == "2024-09-04"
             data = {"2026-11-06": [{"start": "2026-11-06T06:00:00Z"}]}
         elif path == "/v2/conferencing/default":
+            if conferencing_response is not None:
+                return httpx.Response(200, json=conferencing_response)
             data = {"appSlug": "daily-video"}
         elif path == "/v2/schedules":
             data = [{"id": 7, "isDefault": True}]
@@ -124,10 +127,21 @@ async def test_exact_cancel_confirmation_and_changed_target(account):
 
 
 @pytest.mark.asyncio
-async def test_event_type_creation_requires_permission_and_uses_default_schedule(account):
+@pytest.mark.parametrize(
+    "conferencing_response",
+    [
+        None,  # Existing explicitly configured Cal Video default.
+        {"status": "success"},  # Live Cal.com response when no default is saved.
+        {"status": "success", "data": None},
+        {"status": "success", "data": {}},
+    ],
+)
+async def test_event_type_creation_requires_permission_and_uses_default_schedule(
+    account, conferencing_response
+):
     user, vault = account
     posts = []
-    executor = fixture_executor(vault, posts)
+    executor = fixture_executor(vault, posts, conferencing_response=conferencing_response)
     run = accept(user, "need a missing type", str(uuid4()))["run_id"]
     start_test_run(run)
     args = {"title": "Consultation", "duration_minutes": 45}
@@ -141,6 +155,7 @@ async def test_event_type_creation_requires_permission_and_uses_default_schedule
     assert "**Minimum notice:** 1 hour" in text
     assert "Reply **yes**" in text
     assert all(key not in text for key in ("schedule_id", "duration_minutes", '{"'))
+    assert not posts
     assert not Event.select().where(Event.kind == "tool.status").exists()
     wait_for_user(run, str(waiting.value))
     confirmed = accept(user, "yes", str(uuid4()))["run_id"]
@@ -148,6 +163,11 @@ async def test_event_type_creation_requires_permission_and_uses_default_schedule
     result = await executor.execute(confirmed, "create_event_type", args)
     assert "error" not in result
     assert b'"scheduleId":7' in posts[0].content
+    assert json.loads(posts[0].content)["locations"] == [
+        {"type": "integration", "integration": "cal-video"}
+    ]
+    assert result["validated"]["location"] == "Cal Video"
+    assert len(posts) == 1
     assert posts[0].headers["cal-api-version"] == "2026-06-12"
 
 

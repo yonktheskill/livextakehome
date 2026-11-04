@@ -4,9 +4,12 @@ Event-type creation reads the account's default schedule and `GET /v2/conferenci
 It maps only exact known slugs: daily-video/cal-video → cal-video, google-meet → google-meet,
 zoom → zoom, and office365-video → office365-video. For external providers it also reads
 `GET /v2/conferencing` and requires exactly one matching, explicitly valid credential.
-Missing, unknown, invalid, or ambiguous defaults require clarification/account correction;
-there is no fallback to Cal Video. The creation payload explicitly supplies `locations`, and
-confirmation/receipt copy uses the same resolved provider. Cal Video is built in.
+When a successful response has no saved default (omitted data, null, or an empty object),
+creation uses built-in Cal Video, matching Cal.com's own default-location behavior.
+Malformed or unknown explicit defaults and missing, invalid, or ambiguous external accounts
+still require clarification/account correction; request failures are not treated as defaults.
+The creation payload explicitly supplies `locations`, and confirmation/receipt copy uses the
+same resolved provider.
 These reads use the authenticated connection; tests use mocks, never live accounts.
 
 Booking answers accept bounded strings, finite numbers, booleans, and string arrays:
@@ -40,6 +43,7 @@ self-identification phrases; unsupported wording requires clarification.
 ## Official contract references
 
 - [Default conferencing app](https://cal.com/docs/api-reference/v2/conferencing/get-your-default-conferencing-application): appSlug/appLink response.
+- [Cal.com default locations](https://github.com/calcom/cal.com/blob/main/packages/app-store/_utils/getDefaultLocations.ts): built-in Cal Video fallback when no default is saved.
 - [Connected conferencing apps](https://cal.com/docs/api-reference/v2/conferencing/list-your-conferencing-applications): credential type and invalid flag.
 - [Create event type](https://cal.com/docs/api-reference/v2/event-types/create-an-event-type): explicit integration locations; omission defaults to Cal Video.
 - [Create booking](https://cal.com/docs/api-reference/v2/bookings/create-a-booking): attendee.phoneNumber, guests, location and bookingFieldsResponses.
@@ -53,7 +57,8 @@ self-identification phrases; unsupported wording requires clarification.
 
 `cd backend && uv run --offline mypy app/tools`
 
-Focused regressions cover exact provider payload/confirmation, missing/invalid/ambiguous
-defaults, typed answers and standard mappings, nonempty required fields and option validation,
+Focused regressions cover exact provider payload/confirmation, Cal Video fallback for successful
+empty defaults, malformed/unsupported defaults and missing/invalid/ambiguous external accounts,
+typed answers and standard mappings, nonempty required fields and option validation,
 phone-location ambiguity, continuation beyond 500 bookings with crossing intervals, pagination
 failures, and mistaken attendee-name persistence.

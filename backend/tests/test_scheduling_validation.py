@@ -52,6 +52,7 @@ class Calendar:
     ("slug", "credential", "integration", "label"),
     [
         ("daily-video", None, "cal-video", "Cal Video"),
+        ("cal-video", None, "cal-video", "Cal Video"),
         ("google-meet", "google_video", "google-meet", "Google Meet"),
         ("zoom", "zoom_video", "zoom", "Zoom"),
         ("office365-video", "office365_video", "office365-video", "Microsoft Teams"),
@@ -77,14 +78,19 @@ async def test_exact_default_location_payload_and_confirmation(
 @pytest.mark.parametrize(
     ("default", "accounts"),
     [
-        (None, []),
+        ("invalid response", []),
+        ([], []),
+        ({"unexpected": True}, []),
+        ({"appSlug": None}, []),
+        ({"appSlug": ""}, []),
+        ({"appSlug": []}, []),
         ({"appSlug": "unsupported"}, []),
         ({"appSlug": "zoom"}, []),
         ({"appSlug": "zoom"}, [{"type": "zoom_video", "invalid": True}]),
         ({"appSlug": "zoom"}, [{"type": "zoom_video", "invalid": False}] * 2),
     ],
 )
-async def test_missing_invalid_ambiguous_default_blocks_creation(default, accounts):
+async def test_malformed_unsupported_or_unusable_default_blocks_creation(default, accounts):
     with pytest.raises(CalError, match="Ask|ask"):
         await prepare(
             Calendar(default=default, accounts=accounts),
