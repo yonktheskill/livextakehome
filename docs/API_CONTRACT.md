@@ -5,6 +5,8 @@ All backend paths retain `/api` through the Next.js same-origin proxy. JSON erro
 ## Browser API
 
 - `GET /api/health` → `{status:"ok"}`.
+- `GET /api/auth/config` → `{registration_enabled}` (public runtime flag, no credentials).
+- With `REGISTRATION_ENABLED=false`, `POST /api/auth/register` returns 403 without creating a user or session; existing-account login is unaffected. `TEST_ACCOUNT_ENABLED=true` provisions the shared test account once at startup, preserving existing accounts.
 - `POST /api/auth/register` and `/api/auth/login`: `{email,password}` → `{id,email,time_zone,preferred_name}` and session cookie. Registration signs in. `preferred_name` is nullable and saved through chat when the user supplies their own form of address.
 - `GET /api/auth/me` → user object or 401. `POST /api/auth/logout` → 204.
 - `PATCH /api/auth/me`: `{time_zone}` (IANA timezone) → updated user object. The choice persists across sessions and takes precedence over the Cal.com timezone on reconnect. Changing it interrupts active runs and supersedes undispatched plans based on the old timezone; already dispatched actions may finish.

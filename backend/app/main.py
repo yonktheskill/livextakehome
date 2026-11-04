@@ -65,6 +65,10 @@ def create_app(settings=None, provider=None):
         # Fail closed: no automatically generated or default secret.
         app.state.vault = KeyVault(settings.master_secret, settings.master_secret_previous)
         await asyncio.to_thread(initialize, settings.database_path)
+        if settings.test_account_enabled:
+            from app.db.seed import seed_test_account
+
+            await query(seed_test_account)
         runner = None
         task = None
         runtime_provider = provider

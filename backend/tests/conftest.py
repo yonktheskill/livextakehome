@@ -6,6 +6,13 @@ from app.db.database import initialize
 from app.db.models import Connection, Conversation, User, db
 
 
+@pytest.fixture(autouse=True)
+def account_flags(monkeypatch):
+    # Deployment settings must not close registrations or seed accounts in unrelated tests.
+    monkeypatch.setenv("REGISTRATION_ENABLED", "true")
+    monkeypatch.setenv("TEST_ACCOUNT_ENABLED", "false")
+
+
 @pytest.fixture
 def database(tmp_path):
     initialize(str(tmp_path / "test.sqlite3"))

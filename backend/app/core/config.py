@@ -19,6 +19,8 @@ class Settings(BaseSettings):
     public_origin: str = "http://localhost:3002"
     cookie_secure: bool = False
     session_days: int = 7
+    registration_enabled: bool = True
+    test_account_enabled: bool = False
     # Only ingress peers that overwrite X-Real-IP may be listed here.
     trusted_ingress_cidrs: list[str] = Field(default_factory=list)
 

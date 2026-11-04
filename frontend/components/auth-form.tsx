@@ -7,16 +7,33 @@ import { ArrowRight } from "lucide-react";
 import { useAuth } from "./auth";
 import { SecretInput } from "./secret-input";
 import { Brand } from "./brand";
+import { api } from "../lib/api";
 export function AuthForm({ mode }: { mode: "login" | "register" }) {
   const { user, loading, authenticate } = useAuth();
   const router = useRouter();
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState("");
+  const [registrationEnabled, setRegistrationEnabled] = useState<boolean | null>(null);
+  const [configError, setConfigError] = useState(false);
+  useEffect(() => {
+    let active = true;
+    api<{ registration_enabled: boolean }>("/auth/config")
+      .then((config) => {
+        if (active) setRegistrationEnabled(config.registration_enabled === true);
+      })
+      .catch(() => {
+        if (active) setConfigError(true);
+      });
+    return () => {
+      active = false;
+    };
+  }, []);
   useEffect(() => {
     if (user) router.replace("/");
   }, [user, router]);
   async function submit(event: React.FormEvent<HTMLFormElement>) {
     event.preventDefault();
+    if (mode === "register" && registrationEnabled !== true) return;
     setError("");
     const form = new FormData(event.currentTarget);
     if (mode === "register" && form.get("password") !== form.get("confirmPassword")) {
@@ -55,64 +72,82 @@ export function AuthForm({ mode }: { mode: "login" | "register" }) {
       <section className="auth-panel">
         <div className="auth-card">
           <span className="eyebrow">YOUR TIME, WELL SPENT</span>
-          <h2>{register ? "Make room for a better day." : "Welcome back."}</h2>
+          <h2>
+            {register && registrationEnabled === false
+              ? "Registrations are closed."
+              : register
+                ? "Make room for a better day."
+                : "Welcome back."}
+          </h2>
           <p className="muted">
             {register
-              ? "Create an account, then connect your Cal.com account."
+              ? configError
+                ? "Unable to check registration availability. Please reload to try again."
+                : registrationEnabled === null
+                  ? "Checking registration availability…"
+                  : registrationEnabled
+                    ? "Create an account, then connect your Cal.com account."
+                    : "New registrations are currently disabled. You can still sign in to an existing account."
               : "Sign in to pick up your conversation."}
           </p>
-          <form onSubmit={submit} className="form-stack">
-            <Field>
-              <Label>Email address</Label>
-              <Input
-                className="input"
-                name="email"
-                type="email"
-                autoComplete="email"
-                required
-                maxLength={254}
-                placeholder="you@company.com"
-              />
-            </Field>
-            <Field>
-              <Label>Password</Label>
-              <SecretInput
-                visibilityLabel="password"
-                name="password"
-                autoComplete={register ? "new-password" : "current-password"}
-                required
-                minLength={10}
-                maxLength={256}
-              />
-              {register && <p className="field-hint">Use at least 10 characters.</p>}
-            </Field>
-            {register && (
+          {(!register || registrationEnabled === true) && (
+            <form onSubmit={submit} className="form-stack">
               <Field>
-                <Label>Confirm password</Label>
+                <Label>Email address</Label>
+                <Input
+                  className="input"
+                  name="email"
+                  type="email"
+                  autoComplete="email"
+                  required
+                  maxLength={254}
+                  placeholder="you@company.com"
+                />
+              </Field>
+              <Field>
+                <Label>Password</Label>
                 <SecretInput
-                  visibilityLabel="confirm password"
-                  name="confirmPassword"
-                  autoComplete="new-password"
+                  visibilityLabel="password"
+                  name="password"
+                  autoComplete={register ? "new-password" : "current-password"}
                   required
                   minLength={10}
                   maxLength={256}
                 />
+                {register && <p className="field-hint">Use at least 10 characters.</p>}
               </Field>
-            )}
-            {error && (
-              <p role="alert" className="error-box">
-                {error}
-              </p>
-            )}
-            <Button className="primary-button" type="submit" disabled={busy || loading || !!user}>
-              {busy ? "One moment…" : register ? "Create account" : "Sign in"}
-              <ArrowRight size={17} />
-            </Button>
-          </form>
-          <p className="auth-switch">
-            {register ? "Already have an account?" : "New to HelpBook?"}{" "}
-            <Link href={register ? "/login" : "/register"}>{register ? "Sign in" : "Create an account"}</Link>
-          </p>
+              {register && (
+                <Field>
+                  <Label>Confirm password</Label>
+                  <SecretInput
+                    visibilityLabel="confirm password"
+                    name="confirmPassword"
+                    autoComplete="new-password"
+                    required
+                    minLength={10}
+                    maxLength={256}
+                  />
+                </Field>
+              )}
+              {error && (
+                <p role="alert" className="error-box">
+                  {error}
+                </p>
+              )}
+              <Button className="primary-button" type="submit" disabled={busy || loading || !!user}>
+                {busy ? "One moment…" : register ? "Create account" : "Sign in"}
+                <ArrowRight size={17} />
+              </Button>
+            </form>
+          )}
+          {(register || registrationEnabled === true) && (
+            <p className="auth-switch">
+              {register ? "Already have an account?" : "New to HelpBook?"}{" "}
+              <Link href={register ? "/login" : "/register"}>
+                {register ? "Sign in" : "Create an account"}
+              </Link>
+            </p>
+          )}
           <p className="fine-print">
             Your Cal.com API key stays on the server. You can disconnect it at any time.
           </p>

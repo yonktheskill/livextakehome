@@ -82,8 +82,15 @@ async def sign_in(request, response, user):
     return public(user)
 
 
+@router.get("/config")
+async def config(request: Request):
+    return {"registration_enabled": request.app.state.settings.registration_enabled}
+
+
 @router.post("/register")
 async def register(data: Credentials, request: Request, response: Response):
+    if not request.app.state.settings.registration_enabled:
+        raise HTTPException(403, "New registrations are currently disabled.")
     encoded = await query(passwords.hash, data.password)
 
     def create():

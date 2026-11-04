@@ -45,13 +45,32 @@ make dev
 
 The default frontend port is 3002 to avoid conflicts with other local apps. To choose another port, set both `FRONTEND_PORT` and the matching `PUBLIC_ORIGIN` in `.env.local`.
 
-Open `http://localhost:3002`, register, and enter your Cal.com API key through connection settings. The Cal.com key in the existing `.env` is not automatically imported into any account. Never enter a key into chat. Each user has one encrypted Cal.com connection and one ongoing conversation.
+Open `http://localhost:3002`, sign in, and enter your Cal.com API key through connection settings. The Cal.com key in the existing `.env` is not automatically imported into any account. Never enter a key into chat. Each user has one encrypted Cal.com connection and one ongoing conversation.
 
 The assistant receives the signed-in user's email for their own booking details. Email-derived names are unconfirmed hints. It asks how to address the user and can save or correct their preferred name through chat, even without a Cal.com connection. This profile persists across sessions; other people's contacts are not stored. Existing databases upgrade automatically at backend startup.
 
 The frontend proxies same-origin `/api` requests to the backend on port 8000. To run separately, use `make dev-backend` and `make dev-frontend` in separate terminals. Next.js reads `BACKEND_URL` when starting development or building production.
 
 The Cal.com client honors `SSL_CERT_FILE` and `SSL_CERT_DIR` in the backend environment for networks with a custom CA certificate chain. TLS certificate verification stays enabled, and ambient HTTP proxy settings remain ignored. A TLS/network failure during key validation does not indicate an invalid key or an uncertain booking outcome; validation only reads `/v2/me`.
+
+## Account access
+
+The template configures a closed public demo with `REGISTRATION_ENABLED=false` and
+`TEST_ACCOUNT_ENABLED=true`. Existing `.env.local` files need these settings added
+explicitly. Restart the backend after changing them; no frontend rebuild is needed.
+
+`REGISTRATION_ENABLED=false` rejects account creation with HTTP 403, hides sign-up
+links, and replaces `/register` with a closed-registration message. Existing users
+can still sign in. Set it to `true` to reopen registration. The backend default is
+`true` for compatibility when the variable is omitted.
+
+`TEST_ACCOUNT_ENABLED=true` creates `testing@testingmail.com` with password
+`testtesttest` and its conversation at startup, even with registration disabled.
+The password is stored as an Argon2 hash. Restarts preserve the existing account,
+password, and data. This flag defaults to `false` when omitted. Turning it off stops
+provisioning; it does not delete the account. Anyone using these shared credentials
+can access that account's conversation and connected Cal.com account; use demo data
+and a dedicated test Cal.com account.
 
 ## Verification and maintenance
 

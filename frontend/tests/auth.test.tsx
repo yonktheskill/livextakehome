@@ -44,7 +44,9 @@ describe("cookie auth", () => {
       .fn()
       .mockResolvedValueOnce(json({ detail: "Not signed in" }, 401))
       .mockResolvedValueOnce(json({ id: 2, email: "new@example.test", time_zone: "UTC" }));
-    vi.stubGlobal("fetch", fetcher);
+    vi.stubGlobal("fetch", (url: string, init: RequestInit) =>
+      url === "/api/auth/config" ? Promise.resolve(json({ registration_enabled: true })) : fetcher(url, init),
+    );
     render(
       <AuthProvider>
         <AuthForm mode="register" />
@@ -74,6 +76,47 @@ describe("cookie auth", () => {
       password: "example-passphrase",
     });
     expect(storage).not.toHaveBeenCalled();
+  });
+  it.each(["login", "register"] as const)("closes sign-up in %s mode", async (mode) => {
+    vi.stubGlobal(
+      "fetch",
+      vi.fn((url: string) =>
+        Promise.resolve(
+          url === "/api/auth/config"
+            ? json({ registration_enabled: false })
+            : json({ detail: "Not signed in" }, 401),
+        ),
+      ),
+    );
+    render(
+      <AuthProvider>
+        <AuthForm mode={mode} />
+      </AuthProvider>,
+    );
+    if (mode === "register") {
+      expect(await screen.findByText("Registrations are closed.")).toBeInTheDocument();
+      expect(screen.queryByLabelText("Email address")).not.toBeInTheDocument();
+      expect(screen.getByRole("link", { name: "Sign in" })).toHaveAttribute("href", "/login");
+    } else {
+      expect(await screen.findByRole("button", { name: "Sign in" })).toBeEnabled();
+    }
+    expect(screen.queryByRole("link", { name: "Create an account" })).not.toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "Create account" })).not.toBeInTheDocument();
+  });
+  it("keeps sign-up closed if the configuration request fails", async () => {
+    vi.stubGlobal(
+      "fetch",
+      vi.fn((url: string) =>
+        Promise.resolve(json({ detail: "Unavailable" }, url === "/api/auth/config" ? 503 : 401)),
+      ),
+    );
+    render(
+      <AuthProvider>
+        <AuthForm mode="register" />
+      </AuthProvider>,
+    );
+    expect(await screen.findByText(/Unable to check registration availability/)).toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "Create account" })).not.toBeInTheDocument();
   });
   it("surfaces a failed session check rather than treating it as an expired session", async () => {
     vi.stubGlobal("fetch", vi.fn().mockResolvedValue(json({ detail: "Service unavailable" }, 503)));
