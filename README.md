@@ -121,8 +121,7 @@ Frontend, backend, and provider milestones are implemented. Review findings have
 Chat submissions accept up to 6,000 Unicode characters in both the composer and
 API. Oversized drafts remain editable with feedback; they are not silently clipped.
 The 6,000-character limit leaves room for the system prompt, tool schemas and a
-retrieval result within the default 12,000 estimated-token input budget (12,000
-characters already exceeded it in an ordinary-text regression);
+retrieval result within the default 250,000 estimated-token input budget;
 escaping, unusual Unicode, action evidence or smaller configured budgets can still
 cause a safe context-budget failure rather than dropping current intent.
 
@@ -136,10 +135,26 @@ Exact lookups stay inside the run's conversation and historical time boundary;
 `role` filters discovery, while an exact source ID can retrieve either role.
 This pagination supplements the submission limit and also supports older longer rows.
 
-Agent inference defaults to a 12,000 estimated-token input allowance, including tool
-schemas. `CONTEXT_TOOL_RESULT_TOKENS=2500` reserves room when selecting optional
-history; latest tool results are compacted individually if necessary. Original user
-intent and complete call/result pairings remain protected. Three consecutive
+Agent inference defaults to a 250,000 estimated-token input allowance, including tool
+schemas (currently about 6,000 estimated tokens). This is half of GPT-6.1 Sol’s
+500,000-token default Codex window, as documented in the
+[official model documentation](https://developers.openai.com/api/docs/models/gpt-6.1-sol).
+`CONTEXT_WINDOW_TOKENS=500000` retains output and safety reserves. Configure both
+window and input limits for a different model/provider. Provider transport accepts
+up to 4 MB of text JSON, including escaping, so its byte cap supports this allowance.
+The allowance is a ceiling; source deduplication and bounded history selection still apply. `CONTEXT_TOOL_RESULT_TOKENS=2500`
+reserves room when selecting optional history and the protected original-request chain.
+When fixed context leaves too little
+room for that reserve, the remaining space is shared between original intent and tool
+results; latest tool results are compacted individually if necessary. Original user
+intent and complete call/result pairings remain protected. Request-tool responses
+reference complete originals already protected in the prompt instead of echoing their
+captions and image observations. Under pressure, other source payloads become explicit
+`search_history` references; durable facts, revisions, IDs and ambiguity blockers remain.
+Historical image excerpts carry source/attachment IDs rather than full extractions.
+Large image originals use `source_format=image_source_json`: concatenate `content`
+pages to recover JSON containing the original caption, attachments and observations.
+Canonical text and cached extractions remain unchanged. Three consecutive
 identical proposal batches with unchanged results stop with `repeated_calls`;
 changing results or arguments count as progress.
 
@@ -148,7 +163,9 @@ structured failures, context fitting decisions and repeated-call fingerprints.
 Failures retain safe codes, stages, timings, budget consumption, application source
 locations and available provider status/version/turn metadata. Context traces retain
 source/call references, before/after estimates, compaction sizes and prompt/schema
-hashes, without copying assembled prompts, credentials or model reasoning. Tool
+hashes, without copying assembled prompts, credentials or model reasoning. Component
+estimates identify system, action, profile, request state, original intent, current
+request and tool-exchange costs; per-step assembly failures retain their budget audit. Tool
 traces retain original byte/item counts even when their payload is truncated.
 Trace persistence failures emit sanitized JSON to server logs; diagnostic failure
 does not replace the original operation failure. Detailed traces expire after 30 days.

@@ -441,3 +441,18 @@ async def test_native_image_echo_does_not_consume_response_budget(sdk, tmp_path)
     p = provider(tmp_path, limits=ProviderLimits(max_response_bytes=500))
     result = await collect(p)
     assert result[0].text == "ok"
+
+
+@pytest.mark.asyncio
+async def test_default_transport_accepts_large_prompt_within_half_window(sdk, tmp_path):
+    from app.agent.context import estimate, input_budget
+    from app.core.config import Settings
+
+    settings = Settings()
+    messages = [{"role": "user", "content": "🙂" * 100000}]
+    assert estimate(messages, settings) < input_budget(settings, [])
+    serialized_bytes = len(json.dumps({"messages": messages, "tools": []}).encode())
+    assert 256000 < serialized_bytes < ProviderLimits().max_input_bytes
+    events = [event async for event in provider(tmp_path).stream(messages, [])]
+    assert events[-1].kind == "done"
+    assert sdk.instances[-1].prompt["messages"] == messages

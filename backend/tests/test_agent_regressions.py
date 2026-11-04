@@ -489,7 +489,7 @@ def test_successful_mutation_evidence_is_never_an_omission_notice(account):
 
     user, _ = account
     run_id = accept(user, "Book a consultation", str(uuid4()))["run_id"]
-    settings = Settings()
+    settings = Settings(context_input_tokens=16000)
     base = assemble(run_id, settings)
     outcome = {"response": {"uid": "exact_booking", "details": "x" * 30000}, "validated": {}}
     # Fail closed if full structured evidence cannot fit; never erase the successful

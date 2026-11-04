@@ -299,3 +299,20 @@ async def test_cancel_propagates_without_retry():
         with pytest.raises(asyncio.CancelledError):
             await collect(provider)
     assert handler.call_count == 1
+
+
+@pytest.mark.asyncio
+async def test_default_transport_accepts_large_prompt_within_half_window():
+    from app.agent.context import estimate, input_budget
+    from app.core.config import Settings
+
+    settings = Settings()
+    assert settings.context_input_tokens == settings.context_window_tokens // 2 == 250000
+    messages = [{"role": "user", "content": "🙂" * 100000}]
+    assert estimate(messages, settings) < input_budget(settings, [])
+    provider = OpenRouterProvider("test-model", "test-key")
+    payload = provider._payload(messages, [])
+    assert payload["messages"] == messages
+    serialized_bytes = len(json.dumps(payload).encode())
+    assert 256000 < serialized_bytes < provider.limits.max_input_bytes
+    await provider.aclose()

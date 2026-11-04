@@ -20,3 +20,4 @@ When amending/resuming an image task with essential ambiguity, supply clarificat
 for each ambiguous field: {source_message_id,quote} from exact original outer user text.
 The field evidence may come from earlier explicit context or the latest clarification;
 image observations never qualify. Ask when such evidence is unavailable.
+image_ambiguities lists source IDs and blocker fields; retrieve those sources when needed.

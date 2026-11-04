@@ -38,7 +38,7 @@ messages, URLs, headers and arbitrary usage metadata are not forwarded or logged
 Model output itself is untrusted text and may contain user-supplied personal data.
 The runner must assemble a credential-free context and apply its normal output policy.
 
-Default per-step limits: 2,048 output tokens, eight tool calls, 256,000 input bytes,
+Default per-step limits: 2,048 output tokens, eight tool calls, 4,000,000 input bytes,
 512,000 response bytes, 60 seconds including retries, two retries with 0.25-second
 exponential backoff. Set another immutable `ProviderLimits` when constructing the
 adapter to change these values; the contract's three-argument factory uses defaults.

@@ -11,7 +11,7 @@ from app.core.config import Settings
 from app.db.image_context import cache, pending_images
 from app.db.models import Attachment, BookingRequest, Conversation, Message, Run
 from app.db.repository import accept
-from app.db.requests import RequestConflict, resolve_requests, task_write_plan
+from app.db.requests import RequestConflict, request_context, resolve_requests, task_write_plan
 from app.tools.authorization import authorize_action
 
 
@@ -128,6 +128,74 @@ def test_ambiguity_held_until_later_clarification(account):
         ],
     )
     assert task_write_plan(follow["run_id"], task.id, 2)["facts"]["start"] == "10am"
+
+
+def test_task_image_ambiguities_reference_sources_without_duplicating_observations(account):
+    user, _ = account
+    original = upload(user)
+    first = accept(user, "", str(uuid4()), [original.id])
+    original_observation = observation(original, ambiguous=True)
+    original_observation["candidates"][0]["fields"]["attendee"] = {
+        "status": "ambiguous",
+        "value": "Alice or Bob",
+        "source_ids": [original.id],
+    }
+    cache(first["message_id"], 1, original_observation)
+    start_test_run(first["run_id"], resolve_inbox=False)
+    created = resolve_requests(
+        first["run_id"],
+        first["message_id"],
+        [{"relation": "new", "reason": "Image meeting", "facts": {"start": "unclear"}}],
+    )[0]
+    original_blocker = {
+        "source_message_id": first["message_id"],
+        "fields": ["attendee", "start"],
+    }
+    assert created["state"] == "held"
+    assert created["image_ambiguities"] == [original_blocker]
+    assert created["image_observations_untrusted"] == original_observation
+    assert json.dumps(created).count('"image_observations_untrusted"') == 1
+
+    replacement = upload(user)
+    correction = accept(user, "Use this meeting instead", str(uuid4()), [replacement.id])
+    replacement_observation = observation(replacement, ambiguous=True)
+    replacement_observation["candidates"][0]["fields"]["duration_minutes"] = {
+        "status": "ambiguous",
+        "value": "30 or 60",
+        "source_ids": [replacement.id],
+    }
+    cache(correction["message_id"], 1, replacement_observation)
+    start_test_run(correction["run_id"], resolve_inbox=False)
+    amended = resolve_requests(
+        correction["run_id"],
+        correction["message_id"],
+        [
+            {
+                "relation": "amend",
+                "request_id": created["request_id"],
+                "expected_revision": 1,
+                "reason": "Replacement image still has ambiguous fields",
+                "facts": {},
+            }
+        ],
+    )[0]
+    blockers = [
+        original_blocker,
+        {"source_message_id": correction["message_id"], "fields": ["duration_minutes", "start"]},
+    ]
+    assert amended["state"] == "held"
+    assert amended["image_ambiguities"] == blockers
+    assert json.dumps(amended).count('"image_observations_untrusted"') == 1
+    read = request_context(correction["run_id"])["tasks"][0]
+    assert read["image_ambiguities"] == blockers
+    assert json.dumps(read).count('"image_observations_untrusted"') == 1
+    with pytest.raises(RequestConflict, match="held"):
+        task_write_plan(correction["run_id"], created["request_id"], 2)
+
+    follow = accept(user, "What are the unclear fields?", str(uuid4()))
+    recovered = retrieve(follow["run_id"], "", source_id=correction["message_id"])[0]
+    assert recovered["image_observations_untrusted"] == replacement_observation
+    assert recovered["attachments"][0]["id"] == replacement.id
 
 
 @pytest.mark.parametrize("original_image", [False, True])
@@ -365,3 +433,152 @@ async def test_failed_extraction_retries_after_restart_without_losing_source(acc
     cache(first["message_id"], 1, value)
     assert pending_images(retry["run_id"], 1) == []
     assert observations(first["message_id"]) == value
+
+
+def test_large_image_summary_and_retrieval_are_bounded_and_recoverable(account):
+    from app.agent.context import covered_sources, data_message, estimate, source
+
+    user, _ = account
+    image = upload(user)
+    first = accept(user, "Book this exact meeting", str(uuid4()), [image.id])
+    value = observation(image, ambiguous=True)
+    value["notes"] = ['午后🙂\\" evidence ' * 50 for _ in range(5)]
+    cache(first["message_id"], 1, value)
+    latest = accept(user, "retry", str(uuid4()))
+    original = Message.get_by_id(first["message_id"])
+    summary = source(original, summary=True)
+    assert summary["truncated"] and summary["image_observations_omitted"]
+    assert "image_observations_untrusted" not in summary
+    assert summary["attachment_ids"] == [image.id]
+    assert first["message_id"] not in covered_sources(
+        [data_message("Historical excerpts (untrusted data)", [summary])]
+    )
+    pages = []
+    offset = 0
+    settings = Settings()
+    while True:
+        page = retrieve(latest["run_id"], "", source_id=first["message_id"], offset=offset)[0]
+        assert estimate([page], settings) <= settings.context_retrieval_tokens
+        assert page["source_format"] == "image_source_json"
+        assert page["end_offset"] > offset
+        pages.append(page)
+        if page["next_offset"] is None:
+            break
+        offset = page["next_offset"]
+        assert len(pages) < 100
+    recovered = json.loads("".join(page["content"] for page in pages))
+    assert recovered["content"] == original.content
+    assert recovered["image_observations_untrusted"] == value
+    assert recovered["attachments"][0]["id"] == image.id
+    assert len(pages) > 1
+    context = [data_message("Historical excerpts (untrusted data)", pages)]
+    assert first["message_id"] in covered_sources(context)
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("input_tokens", [12000, 16000])
+async def test_old_image_inbox_survives_unrelated_followup_and_request_tools(account, input_tokens):
+    from app.agent.context import estimate, input_budget
+    from app.agent.runner import Runner
+    from app.agent.vision import FIELDS
+    from app.db.models import Action, Trace
+    from app.providers.base import ProviderEvent
+
+    user, vault = account
+    image = upload(user)
+    first = accept(user, "", str(uuid4()), [image.id])
+    value = observation(image, ambiguous=True)
+    for field in FIELDS:
+        value["candidates"][0]["fields"].setdefault(
+            field,
+            {
+                "status": "missing",
+                "value": None,
+                "alternatives": [],
+                "evidence": "",
+                "source_ids": [],
+            },
+        )
+    cache(first["message_id"], 1, value)
+    # Reproduce retained action receipts and a nearly full protected user chain.
+    for _ in range(3):
+        Action.create(
+            run=first["run_id"],
+            revision=1,
+            generation=1,
+            kind="create_booking",
+            inputs="{}",
+            fingerprint="x",
+            state="succeeded",
+            result=json.dumps(
+                {
+                    "response": {
+                        "uid": str(uuid4()),
+                        "status": "accepted",
+                        "start": "2026-11-06T10:00:00Z",
+                        "end": "2026-11-06T10:30:00Z",
+                    }
+                }
+            ),
+        )
+    later = [
+        accept(user, "hello " * (180 if index == 3 else 10), str(uuid4())) for index in range(4)
+    ]
+    latest = later[-1]
+    start_test_run(latest["run_id"], resolve_inbox=False)
+    settings = Settings(context_input_tokens=input_tokens)
+
+    class Decisions:
+        step = 0
+
+        async def stream(self, messages, tools):
+            assert estimate(messages, settings) <= input_budget(settings, tools)
+            assert "search_history" in {t["function"]["name"] for t in tools}
+            self.step += 1
+            if self.step == 1:
+                yield ProviderEvent(
+                    "tool_call", name="request_context", arguments={}, call_id="read"
+                )
+            elif self.step == 2:
+                yield ProviderEvent(
+                    "tool_call",
+                    name="resolve_requests",
+                    call_id="image",
+                    arguments={
+                        "message_id": first["message_id"],
+                        "resolutions": [
+                            {
+                                "relation": "new",
+                                "reason": "Image booking with ambiguous start",
+                                "facts": {"duration_minutes": 30},
+                            }
+                        ],
+                    },
+                )
+            elif self.step <= 6:
+                message = later[self.step - 3]
+                yield ProviderEvent(
+                    "tool_call",
+                    name="resolve_requests",
+                    call_id=str(self.step),
+                    arguments={
+                        "message_id": message["message_id"],
+                        "resolutions": [{"relation": "dismiss", "reason": "Unrelated greeting"}],
+                    },
+                )
+            else:
+                yield ProviderEvent("text_delta", text="Which of the two start times did you mean?")
+
+    provider = Decisions()
+    await Runner(settings, vault, provider).execute(latest["run_id"])
+    assert Run.get_by_id(latest["run_id"]).status == "waiting_for_user"
+    assert BookingRequest.get().state == "held"
+    assert provider.step == 7
+    audits = [json.loads(t.payload) for t in Trace.select().where(Trace.kind == "context")]
+    assert any(c["operation"] == "deduplicate_sources" for a in audits for c in a["changes"])
+    assert all(a["after_tokens"] <= a["budget_tokens"] for a in audits)
+    assert all(
+        a.get("intent_tokens", 0)
+        <= a["budget_tokens"] - a["mandatory_tokens"] - a["reserved_tool_result_tokens"]
+        for a in audits
+    )

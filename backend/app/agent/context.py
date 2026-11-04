@@ -68,14 +68,22 @@ def excerpt(text, limit):
 def source(message, *, summary=False):
     checked = safe_text(message.content)
     content = excerpt(checked, 400) if summary else checked
+    images = source_images(message.id)
+    if summary and images:
+        # A text excerpt must not drag a full cached extraction into every summary.
+        # Keep provenance and make the omitted source explicitly retrievable.
+        images = {
+            "attachment_ids": [a["id"] for a in images["attachments"]],
+            "image_observations_omitted": True,
+        }
     return {
-        **source_images(message.id),
+        **images,
         "source_id": message.id,
         "created_at": message.created_at,
         "time_zone": message.time_zone,
         "role": message.role,
         "content": content,
-        "truncated": content != checked,
+        "truncated": content != checked or bool(summary and images),
     }
 
 
@@ -136,7 +144,7 @@ def covered_sources(messages):
     return result
 
 
-def assemble(run_id, settings=None, tools=None):
+def assemble(run_id, settings=None, tools=None, *, audit=None):
     settings = settings or Settings()
     tools = tools or []
     run = Run.get_by_id(run_id)
@@ -195,6 +203,17 @@ def assemble(run_id, settings=None, tools=None):
     ]
     latest = {"role": "user", "content": encode(source(current))}
     budget = input_budget(settings, tools)
+    if audit is not None:
+        audit.update(
+            {
+                "budget_tokens": budget,
+                "schema_tokens": estimate(tools, settings),
+                "system_tokens": estimate(system, settings),
+                "action_evidence_tokens": estimate(mandatory[1], settings),
+                "profile_tokens": estimate(mandatory[2], settings),
+                "current_request_tokens": estimate(latest, settings),
+            }
+        )
     requests_state = request_context(run_id, limit=4)
     if requests_state["tasks"] or len(requests_state["inbox"]) > 1:
         task_rows = []
@@ -221,6 +240,10 @@ def assemble(run_id, settings=None, tools=None):
             task_rows.pop()
             state["more_tasks"] = True
         mandatory.append(data_message(REQUEST_STATE, state))
+        if audit is not None:
+            audit["request_state_tokens"] = estimate(mandatory[-1], settings)
+    if audit is not None:
+        audit["mandatory_tokens"] = estimate([*mandatory, latest], settings)
     if estimate([*mandatory, latest], settings) > budget:
         raise ContextBudgetExceeded("Current request and action identities exceed input budget")
     previous = Message.select().where(
@@ -232,11 +255,19 @@ def assemble(run_id, settings=None, tools=None):
     # Reserve a bounded chain of original requests/clarifications independently of
     # assistant verbosity. Tool results must not evict it, leaving only "retry".
     requests: list[dict] = []
+    available = max(0, budget - estimate([*mandatory, latest], settings))
+    # Protected history must share the remaining space with the next tool result.
+    # Reserving only against optional history let this chain consume the entire
+    # allowance. Keep at least half the available space for original intent when
+    # fixed instructions/current input make the configured result reserve impossible.
+    result_reserve = min(settings.context_tool_result_tokens, budget // 3, available // 2)
     intent_limit = min(
         settings.context_intent_tokens,
         budget // 3,
-        max(0, budget - estimate([*mandatory, latest], settings)),
+        available - result_reserve,
     )
+    if audit is not None:
+        audit["reserved_tool_result_tokens"] = result_reserve
     for row in previous.where(Message.role == "user").limit(20):
         entry = source(row)
         if estimate(data_message(USER_REQUESTS, [entry, *requests]), settings) > intent_limit:
@@ -245,6 +276,8 @@ def assemble(run_id, settings=None, tools=None):
             requests.insert(0, entry)
     if requests:
         mandatory.append(data_message(USER_REQUESTS, requests))
+        if audit is not None:
+            audit["intent_tokens"] = estimate(mandatory[-1], settings)
     included = {entry["source_id"] for entry in requests} | {current.id}
     rows = [row for row in previous.limit(256) if row.id not in included]
     history = [{"role": m.role, "content": encode(source(m))} for m in reversed(rows)]
@@ -297,6 +330,38 @@ def assemble(run_id, settings=None, tools=None):
 
 def compact_result(name, value):
     """Keep scheduling identities/facts; full detail can be fetched by exact ID."""
+    if name in {"request_context", "resolve_requests"}:
+
+        def reference_source(row):
+            if not isinstance(row, dict):
+                return row
+            source_id = row.get("origin_message_id", row.get("message_id"))
+            if not source_id:
+                return row
+            payload = {
+                "original_user_message",
+                "content",
+                "attachments",
+                "image_observations_untrusted",
+            }
+            result = {k: v for k, v in row.items() if k not in payload}
+            if result != row:
+                result["source_content_omitted"] = {
+                    "source_id": source_id,
+                    "retrieve_with": "search_history before interpreting this source",
+                }
+            return result
+
+        if isinstance(value, list):
+            return [reference_source(row) for row in value]
+        if isinstance(value, dict):
+            return {
+                k: [reference_source(row) for row in v]
+                if k in {"tasks", "inbox"} and isinstance(v, list)
+                else v
+                for k, v in value.items()
+            }
+        return value
     fields = {
         "list_event_types": {
             "id",
@@ -337,8 +402,6 @@ def compact_result(name, value):
         "cancel_booking",
         "create_event_type",
         "save_preferred_name",
-        "resolve_requests",
-        "request_context",
         "authorize_action",
     }:
         # Planner facts, source pages and mutation evidence are not disposable prose.
@@ -375,6 +438,74 @@ def fit_prompt(base, exchanges, tools, settings, *, audit=None):
 
     def size():
         return estimate(base + [m for g in groups for m in g], settings)
+
+    # Request tools echo original captions/extractions beside their durable facts.
+    # Reference originals already protected in this prompt rather than serializing
+    # them again. Optional history is deliberately excluded: it may be evicted below.
+    originals = {}
+    for message in base:
+        if message in optional:
+            continue
+        content = message.get("content") or ""
+        if content.startswith(USER_REQUESTS + ": "):
+            content = content[len(USER_REQUESTS) + 2 :]
+        try:
+            value = json.loads(content)
+        except ValueError:
+            continue
+        for entry in value if isinstance(value, list) else [value]:
+            if isinstance(entry, dict) and entry.get("source_id") in covered_sources([message]):
+                originals[entry["source_id"]] = entry
+
+    def deduplicate_source(value):
+        if not isinstance(value, dict):
+            return value
+        result = dict(value)
+        original = originals.get(value.get("origin_message_id", value.get("message_id")))
+        if original:
+            removed = False
+            for key in ("original_user_message", "content"):
+                if key in result and result[key] == original["content"]:
+                    del result[key]
+                    removed = True
+            for key in ("attachments", "image_observations_untrusted"):
+                if key in result and key in original and result[key] == original[key]:
+                    del result[key]
+                    removed = True
+            if removed:
+                result["source_content_in_context"] = original["source_id"]
+        return result
+
+    for group in groups:
+        names = {c["id"]: c["function"]["name"] for m in group for c in m.get("tool_calls", [])}
+        for message in group:
+            if message["role"] != "tool" or names.get(message["tool_call_id"]) not in {
+                "request_context",
+                "resolve_requests",
+            }:
+                continue
+            original = message["content"]
+            value = json.loads(original)
+            if isinstance(value, list):
+                value = [deduplicate_source(row) for row in value]
+            elif isinstance(value, dict):
+                value = {
+                    k: [deduplicate_source(row) for row in v]
+                    if k in {"tasks", "inbox"} and isinstance(v, list)
+                    else v
+                    for k, v in value.items()
+                }
+            compacted = encode(value)
+            if len(compacted.encode()) < len(original.encode()):
+                message["content"] = compacted
+                changes.append(
+                    {
+                        "operation": "deduplicate_sources",
+                        "call_id": message["tool_call_id"],
+                        "before_bytes": len(original.encode()),
+                        "after_bytes": len(compacted.encode()),
+                    }
+                )
 
     for group in groups:
         names = {c["id"]: c["function"]["name"] for m in group for c in m.get("tool_calls", [])}
@@ -510,6 +641,7 @@ def fit_prompt(base, exchanges, tools, settings, *, audit=None):
         audit.update(
             {
                 "after_tokens": estimate(result, settings),
+                "tool_exchange_tokens": estimate([m for g in groups for m in g], settings),
                 "source_ids_after": sorted(covered_sources(base)),
                 "result_sizes": [
                     {"call_id": m["tool_call_id"], "bytes": len(m["content"].encode())}
@@ -533,8 +665,9 @@ def authorized(run_id):
 def retrieve(run_id, query, excluded=None, settings=None, *, role="user", source_id=None, offset=0):
     """Return bounded pages of filtered originals; offsets count Unicode characters.
 
-    Exact IDs never bypass conversation/time boundaries. Continuations refer to the
-    same safe_text representation as the first page, rather than raw private data.
+    Exact IDs never bypass conversation/time boundaries. Large image sources use
+    paged JSON containing the filtered caption and observations; ordinary sources
+    page their filtered text. The representation is stable across continuations.
     """
     if type(offset) is not int or offset < 0 or (offset and not source_id):
         raise ValueError("offset must be a nonnegative integer and requires source_id")
@@ -569,6 +702,19 @@ def retrieve(run_id, query, excluded=None, settings=None, *, role="user", source
     for message in rows.order_by(*order).limit(8):
         entry = {**source(message), "conversation_id": message.conversation_id}
         text = entry["content"]
+        if (
+            "image_observations_untrusted" in entry
+            and estimate({**entry, "content": ""}, settings)
+            > settings.context_retrieval_tokens // 2
+        ):
+            # Otherwise unpageable extraction metadata alone can exceed every page.
+            text = encode(
+                {
+                    k: entry.pop(k)
+                    for k in ("content", "attachments", "image_observations_untrusted")
+                }
+            )
+            entry["source_format"] = "image_source_json"
         if offset > len(text):
             raise ValueError("offset exceeds source length")
 

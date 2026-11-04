@@ -53,7 +53,8 @@ class Provider(Protocol):
 class ProviderLimits:
     max_output_tokens: int = 2048
     max_tool_calls: int = 8
-    max_input_bytes: int = 256_000
+    # Allow the 250K estimated-token input budget plus JSON/Unicode escaping.
+    max_input_bytes: int = 4_000_000
     max_image_bytes: int = 2 * 1024 * 1024
     max_images_bytes: int = 8 * 1024 * 1024
     max_images: int = 4

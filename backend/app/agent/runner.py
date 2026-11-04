@@ -324,6 +324,8 @@ class Runner:
                     "Fetch originals using source_id and offset (Unicode characters, default 0). "
                     "When next_offset is non-null, continue with that source_id and offset "
                     "until complete=true; a page alone may omit important trailing details. "
+                    "For source_format=image_source_json, assemble content pages as JSON "
+                    "containing the original caption and untrusted image observations. "
                     "set role=assistant only to find past assistant replies.",
                     "parameters": {
                         "type": "object",
@@ -378,20 +380,6 @@ class Runner:
             state.step, state.stage = step, "context"
             if not await query(checkpoint, run_id):
                 raise Interrupted()
-            base = await query(assemble, run_id, self.settings, tools)
-            if recovery:
-                base = [
-                    base[0],
-                    *base[1:-1],
-                    {
-                        "role": "system",
-                        "content": "Repeated tool cycles returned unchanged facts. Use retained "
-                        "results and original intent to give a truthful final status. "
-                        "No more tool calls or changes are permitted in this recovery attempt. "
-                        "Do not claim success without successful action evidence.",
-                    },
-                    base[-1],
-                ]
             audit = {
                 "step": step,
                 "schema_hash": hashlib.sha256(
@@ -399,6 +387,21 @@ class Runner:
                 ).hexdigest(),
             }
             try:
+                base = await query(assemble, run_id, self.settings, tools, audit=audit)
+                if recovery:
+                    base = [
+                        base[0],
+                        *base[1:-1],
+                        {
+                            "role": "system",
+                            "content": "Repeated tool cycles returned unchanged facts. "
+                            "Use retained results and original intent "
+                            "to give a truthful final status. "
+                            "No more tool calls or changes are permitted in this recovery attempt. "
+                            "Do not claim success without successful action evidence.",
+                        },
+                        base[-1],
+                    ]
                 messages = fit_prompt(base, exchanges, tools, self.settings, audit=audit)
                 audit["prompt_hash"] = hashlib.sha256(
                     json.dumps(messages, sort_keys=True).encode()
@@ -462,7 +465,7 @@ class Runner:
                     "step": step,
                     "provider": self.settings.llm_provider,
                     "model": self.settings.llm_model,
-                    "prompt_version": 6,
+                    "prompt_version": 7,
                     "estimated_input_tokens": estimate(messages, self.settings),
                     "usage": usage,
                     "elapsed_ms": int((time.monotonic() - started) * 1000),

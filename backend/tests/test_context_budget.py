@@ -152,7 +152,7 @@ def test_retry_keeps_original_user_request_and_attendee_through_tool_pressure(ac
             content="I'll look for the original request before retrying. " * 100,
         )
     retry = submit(user, "retry")
-    settings = Settings()
+    settings = Settings(context_input_tokens=16000)
     tools = definitions()
     base = assemble(retry, settings, tools)
     tool_call = {
@@ -343,3 +343,66 @@ def test_submission_limit_matches_composer_and_current_tail_fits_default(account
     user, _ = account
     messages = assemble(submit(user, text), Settings(), definitions())
     assert json.loads(messages[-1]["content"])["content"].endswith(tail)
+
+
+def test_request_tool_references_only_protected_complete_sources(account):
+    from app.agent.context import compact_result
+
+    user, _ = account
+    text = "Original scheduling details. " * 75
+    run_id = submit(user, text)
+    current = Run.get_by_id(run_id).message
+    settings = Settings(context_input_tokens=4500)
+    base = assemble(run_id, settings)
+    facts = {"start": "2026-11-06T10:00:00Z", "attendee": {"name": "Alice"}}
+    row = {
+        "origin_message_id": current.id,
+        "original_user_message": text,
+        "request_id": "task-id",
+        "revision": 3,
+        "state": "held",
+        "facts": facts,
+        "image_ambiguities": [{"source_message_id": current.id, "fields": ["start"]}],
+    }
+    exchange = [
+        {
+            "role": "assistant",
+            "content": None,
+            "tool_calls": [
+                {
+                    "id": "resolve",
+                    "function": {"name": "resolve_requests", "arguments": "{}"},
+                }
+            ],
+        },
+        {"role": "tool", "tool_call_id": "resolve", "content": json.dumps([row])},
+    ]
+    audit = {}
+    result = fit_prompt(base, [exchange], [], settings, audit=audit)
+    compacted = json.loads(result[-1]["content"])[0]
+    assert compacted == {k: v for k, v in row.items() if k != "original_user_message"} | {
+        "source_content_in_context": current.id,
+    }
+    assert json.loads(result[-3]["content"])["content"] == text
+    assert estimate(result, settings) <= input_budget(settings, [])
+    assert audit["changes"][0]["operation"] == "deduplicate_sources"
+    assert audit["before_tokens"] > audit["budget_tokens"]
+    assert json.loads(exchange[-1]["content"])[0] == row  # Canonical exchange is unchanged.
+
+    # An omitted original has an exact recovery pointer; facts and blockers survive.
+    other = {**row, "origin_message_id": "another-source"}
+    referenced = compact_result("resolve_requests", [other])[0]
+    assert referenced["source_content_omitted"]["source_id"] == "another-source"
+    assert referenced["facts"] == facts
+    assert referenced["image_ambiguities"] == row["image_ambiguities"]
+
+
+def test_assembly_failure_retains_component_budget_audit(account):
+    user, _ = account
+    audit = {}
+    with pytest.raises(ContextBudgetExceeded):
+        assemble(submit(user, "details " * 500), Settings(context_input_tokens=1500), audit=audit)
+    assert audit["mandatory_tokens"] > audit["budget_tokens"]
+    assert audit["current_request_tokens"] > 1000
+    assert audit["system_tokens"] > 0 and audit["schema_tokens"] > 0
+    assert "details" not in json.dumps(audit)

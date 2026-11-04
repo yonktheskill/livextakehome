@@ -126,7 +126,7 @@ any text/tool events. Every proposal receives a fresh application call ID.
 The app executor still owns full per-tool schema, ownership, confirmation and
 mutation checks.
 
-Default input bound is 256 KB, observed notification/decision bound 512 KB, eight
+Default input bound is 4 MB, observed notification/decision bound 512 KB, eight
 proposals and 60 seconds per step. Set `ProviderLimits` on direct construction to
 change these bounds. Output arrives as one validated text event, not incremental
 token streaming. No usage event/token-counting capability is claimed.
@@ -181,5 +181,5 @@ separate tool-free extraction turn. Runtime tools, filesystem access, network ac
 and environment restrictions remain in force; images do not enable local image paths.
 Choose a vision-capable model for the configured provider. Unsupported input fails
 without a paid fallback. Image transport limits (4 images, 2 MiB each / 8 MiB total)
-are separate from the 256 KB text-input budget; encoded pixels are not text tokens.
+are separate from the 4 MB text-input budget; encoded pixels are not text tokens.
 Extraction incurs the configured model's image cost and an extra inference turn.

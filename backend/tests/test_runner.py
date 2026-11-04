@@ -192,7 +192,7 @@ def test_context_compacts_and_retrieves_original_timestamp(account):
     for index in range(65):
         run_id = accept(user, f"message {index} candidate Alice", str(uuid4()))["run_id"]
         start_test_run(run_id)
-    context = assemble(run_id)
+    context = assemble(run_id, Settings(context_input_tokens=12000))
     assert Snapshot.select().count() == 1
     assert len(context) <= 24
     assert any("Canonical action evidence" in m["content"] for m in context)

@@ -62,7 +62,8 @@ def _view(task):
         **(
             {
                 "image_ambiguities": [
-                    {"source_message_id": key, **source_images(key)} for key in _image_sources(task)
+                    {"source_message_id": key, "fields": ambiguous_fields(key)}
+                    for key in _image_sources(task)
                 ]
             }
             if _image_sources(task)

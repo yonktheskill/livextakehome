@@ -41,8 +41,10 @@ class Settings(BaseSettings):
     run_timeout_seconds: int = 180
 
     # Estimated token/cost limits; no paid summarizer or tokenizer dependency.
-    context_window_tokens: int = Field(default=32768, ge=1024)
-    context_input_tokens: int = Field(default=12000, ge=512)
+    # Half of gpt-6.1-sol's default Codex window for input, including schemas.
+    # Override both limits when selecting a model with a different context window.
+    context_window_tokens: int = Field(default=500000, ge=1024)
+    context_input_tokens: int = Field(default=250000, ge=512)
     context_output_tokens: int = Field(default=4096, ge=1)
     context_safety_tokens: int = Field(default=1024, ge=0)
     context_tool_result_tokens: int = Field(default=2500, ge=0)
