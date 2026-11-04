@@ -13,6 +13,7 @@ from app.db.database import query
 from app.db.dispatch import receipt
 from app.db.models import Action, Conversation, Event, Message, Run, Trace
 from app.db.repository import TERMINAL, accept, stop
+from app.tools.messages import action_message
 
 router = APIRouter(prefix="/api")
 
@@ -59,7 +60,7 @@ async def history(request: Request, before: str | None = None):
             for m in page
             if m.client_request_id and m.client_request_id.startswith("action:")
         ]
-        receipts = (
+        actions = list(
             Action.select()
             .join(Run)
             .where(
@@ -68,20 +69,32 @@ async def history(request: Request, before: str | None = None):
                 & ((Action.run.in_(run_ids)) | (Action.id.in_(action_ids)))
             )
         )
+        actions_by_id = {a.id: a for a in actions}
+
+        def visible_content(message):
+            if not (message.client_request_id or "").startswith("action:"):
+                return safe_text(message.content)
+            action = actions_by_id.get(message.client_request_id[7:])
+            if not action or action.kind == "create_booking":
+                return None
+            # Also format legacy action anchors, which stored internal JSON.
+            return safe_text(
+                action_message(action.kind, safe_data(json.loads(action.result)), user.time_zone)
+            )
+
         return {
-            "receipts": [receipt(a) for a in receipts],
-            # Canonical action messages anchor durable receipts and remain internal.
-            # Render their structured cards instead of duplicate raw JSON in chat.
+            "receipts": [receipt(a) for a in actions if a.kind == "create_booking"],
+            # Only booking creation uses a card. Other action anchors are chat messages.
             "messages": [
                 {
                     "id": m.id,
                     "role": m.role,
-                    "content": safe_text(m.content),
+                    "content": content,
                     "created_at": datetime.fromtimestamp(m.created_at, UTC).isoformat(),
                     "status": m.status,
                 }
                 for m in reversed(page)
-                if not (m.client_request_id or "").startswith("action:")
+                if (content := visible_content(m)) is not None
             ],
             "next_cursor": page[-1].id if has_more else None,
         }
@@ -143,8 +156,16 @@ async def events(run_id: str, request: Request, after: int = 0):
                     message = Message.get_or_none(
                         (Message.id == message_id) & (Message.conversation == run.conversation_id)
                     )
-                    checked_messages[message_id] = not message or bool(reason(message.content))
-                if checked_messages[message_id]:
+                    checked_messages[message_id] = (
+                        not message or bool(reason(message.content)),
+                        datetime.fromtimestamp(message.created_at, UTC).isoformat()
+                        if message
+                        else None,
+                    )
+                blocked, created_at = checked_messages[message_id]
+                if created_at:
+                    payload["created_at"] = created_at
+                if blocked:
                     payload["text"] = SAFE_OUTPUT
             public.append((row.sequence, row.kind, json.dumps(payload)))
         return public, run.status

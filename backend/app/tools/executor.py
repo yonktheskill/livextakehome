@@ -11,8 +11,9 @@ from app.core.security import digest
 from app.db.database import query
 from app.db.dispatch import StalePreparation, prepare_action, settle
 from app.db.models import Action, Connection, Run, User, db
-from app.db.repository import checkpoint, claim, emit
+from app.db.repository import checkpoint, claim
 from app.tools.durations import duration
+from app.tools.messages import confirmation_message
 from app.tools.planning import get_booking, get_type, plan_booking_duration, prepare, slots
 from app.tools.schemas import SCHEMAS, SavePreferredName
 
@@ -108,16 +109,8 @@ class Executor:
                 },
             )
             if waiting:
-                prompt = (
-                    "Confirm cancellation of this exact booking"
-                    if name == "cancel_booking"
-                    else "Confirm creating this reusable event type"
-                )
-                text = (
-                    f"{prompt}: {json.dumps(details)}. Reply yes to confirm, or describe a change."
-                )
-                await query(emit, run_id, "tool.status", {"text": text})
-                raise Waiting(text)
+                time_zone = await query(lambda: run.conversation.user.time_zone)
+                raise Waiting(confirmation_message(name, details, time_zone))
             frozen_action = await query(Action.get_by_id, action_id)
             if frozen_action.state in {"succeeded", "failed"}:
                 return json.loads(frozen_action.result)

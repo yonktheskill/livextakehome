@@ -5,6 +5,7 @@ import { ArrowDown, ArrowUp, BookOpen, RefreshCw, Square } from "lucide-react";
 import { useAuth } from "./auth";
 import { api, ApiError, type Connection, type User } from "../lib/api";
 import { useConversation } from "../lib/use-conversation";
+import { conversationTimeline } from "../lib/conversation-timeline";
 import { messageTime } from "../lib/timezone";
 import { ConnectionDialog } from "./connection-dialog";
 import { ChatHeader } from "./chat-header";
@@ -131,9 +132,17 @@ export function Chat({ user }: { user: User }) {
                     }}
                   />
                 )}
-                {chat.messages
-                  .filter((m) => ["user", "assistant"].includes(m.role))
-                  .map((message) => (
+                {conversationTimeline(chat.messages, chat.receipts).map((item) => {
+                  if (item.type === "receipt")
+                    return (
+                      <ActionReceipt
+                        key={`action:${item.receipt.action_id}`}
+                        receipt={item.receipt}
+                        timeZone={user.time_zone}
+                      />
+                    );
+                  const message = item.message;
+                  return (
                     <article
                       key={message.id}
                       className={`message ${message.role === "user" ? "message-user" : "message-assistant"}`}
@@ -156,10 +165,8 @@ export function Chat({ user }: { user: User }) {
                         <MessageCopy content={message.content} />
                       </div>
                     </article>
-                  ))}
-                {chat.receipts.map((receipt) => (
-                  <ActionReceipt key={receipt.action_id} receipt={receipt} timeZone={user.time_zone} />
-                ))}
+                  );
+                })}
               </>
             )}
             {chat.status && (

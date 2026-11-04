@@ -1,11 +1,13 @@
 """Canonical immutable dispatch evidence and atomic user-visible settlement."""
 
 import json
+from datetime import UTC, datetime
 
 from app.core.guardrails import safe_data
 from app.core.security import digest
 from app.db.models import Action, Confirmation, Connection, Message, Run, db
 from app.db.repository import checkpoint, emit
+from app.tools.messages import action_message
 
 
 class StalePreparation(Exception):
@@ -57,11 +59,20 @@ def prepare_action(run, conn, name, encoded, fingerprint, confirmation_required,
         return action.id, confirmation_required
 
 
-def receipt(action):
+def receipt(action, message=None):
     outcome = json.loads(action.result)
+    if message is None:
+        message = Message.get_or_none(
+            (Message.conversation == action.run.conversation_id)
+            & (Message.client_request_id == f"action:{action.id}")
+        )
     return safe_data(
         {
             "action_id": action.id,
+            "message_id": message.id if message else None,
+            "created_at": datetime.fromtimestamp(
+                message.created_at if message else action.created_at, UTC
+            ).isoformat(),
             "kind": action.kind,
             "summary": "Cal.com returned an action result; inspect its status.",
             "details": {
@@ -86,22 +97,32 @@ def settle(action_id, state, result):
         action.result = json.dumps(result)
         action.save()
         if state == "succeeded":
-            data = receipt(action)
-            emit(action.run_id, "action.result", data)
             response = result.get("response", {})
             fields = {
                 k: response[k]
                 for k in ("uid", "id", "title", "start", "end", "status")
                 if k in response
             }
-            Message.create(
+            content = (
+                f"Action receipt ({action.kind}):\n\n```json\n"
+                f"{json.dumps(safe_data(fields), indent=2)}\n```"
+                if action.kind == "create_booking"
+                else action_message(
+                    action.kind, safe_data(result), action.run.conversation.user.time_zone
+                )
+            )
+            message = Message.create(
                 conversation=action.run.conversation_id,
                 role="assistant",
                 client_request_id=f"action:{action.id}",
-                content=(
-                    f"Action receipt ({action.kind}):\n\n```json\n"
-                    f"{json.dumps(safe_data(fields), indent=2)}\n```"
-                ),
+                content=content,
                 status="final",
             )
+            emit(action.run_id, "action.result", receipt(action, message))
+            if action.kind != "create_booking":
+                emit(
+                    action.run_id,
+                    "message.delta",
+                    {"message_id": message.id, "text": message.content},
+                )
         return True

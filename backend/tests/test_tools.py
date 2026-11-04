@@ -4,6 +4,7 @@ import httpx
 import pytest
 
 from app.calcom.client import CalClient
+from app.db.models import Event
 from app.db.repository import accept
 from app.tools.executor import Executor, UnknownOutcome, Waiting
 
@@ -85,11 +86,18 @@ async def test_create_rounding_reschedule_and_list(account):
 @pytest.mark.asyncio
 async def test_exact_cancel_confirmation_and_changed_target(account):
     user, vault = account
+    user.time_zone = "Asia/Singapore"
+    user.save()
     posts = []
     executor = fixture_executor(vault, posts)
     run = accept(user, "cancel", str(uuid4()))["run_id"]
-    with pytest.raises(Waiting):
+    with pytest.raises(Waiting) as waiting:
         await executor.execute(run, "cancel_booking", {"booking_uid": "abc"})
+    assert "cancel “Intro”" in str(waiting.value)
+    assert "Thursday, 5 November 2026 at 14:00 (Asia/Singapore)" in str(waiting.value)
+    assert "Thursday, 5 November 2026 at 14:30 (Asia/Singapore)" in str(waiting.value)
+    assert "**Booking reference:** abc" in str(waiting.value)
+    assert '{"' not in str(waiting.value)
     assert not posts
     confirmed = accept(user, "yes", str(uuid4()))["run_id"]
     result = await executor.execute(confirmed, "cancel_booking", {"booking_uid": "abc"})
@@ -111,8 +119,17 @@ async def test_event_type_creation_requires_permission_and_uses_default_schedule
     executor = fixture_executor(vault, posts)
     run = accept(user, "need a missing type", str(uuid4()))["run_id"]
     args = {"title": "Consultation", "duration_minutes": 45}
-    with pytest.raises(Waiting):
+    with pytest.raises(Waiting) as waiting:
         await executor.execute(run, "create_event_type", args)
+    text = str(waiting.value)
+    assert "Shall I create “Consultation” as a reusable meeting type?" in text
+    assert "**Duration:** 45 minutes" in text
+    assert "**Location:** Cal Video" in text
+    assert "**Availability:** Your default schedule" in text
+    assert "**Minimum notice:** 1 hour" in text
+    assert "Reply **yes**" in text
+    assert all(key not in text for key in ("schedule_id", "duration_minutes", '{"'))
+    assert not Event.select().where(Event.kind == "tool.status").exists()
     confirmed = accept(user, "yes", str(uuid4()))["run_id"]
     result = await executor.execute(confirmed, "create_event_type", args)
     assert "error" not in result

@@ -117,8 +117,11 @@ async def test_create_missing_type_confirm_then_book_original_request(
         "duration_minutes": effective,
         "requested_duration_minutes": requested,
     }
-    with pytest.raises(Waiting):
+    with pytest.raises(Waiting) as waiting:
         await executor.execute(run, "create_event_type", args)
+    if requested != effective:
+        assert f"You asked for {requested} minutes" in str(waiting.value)
+        assert f"next supported length is {effective} minutes" in str(waiting.value)
     assert not calendar.posts
     proposal = json.loads(Action.get().request)["validation"]
     assert proposal["duration_minutes"] == effective

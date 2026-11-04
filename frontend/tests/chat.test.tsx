@@ -83,6 +83,97 @@ describe("chat composer controls", () => {
     expect(screen.queryByText(/Action receipt \(/)).not.toBeInTheDocument();
   });
 
+  it("shows confirmations once in chat and reserves result cards for booking creation", async () => {
+    const confirmation =
+      "Shall I create “Intro” as a reusable meeting type?\n\n- **Duration:** 30 minutes\n- **Location:** Cal Video\n\nReply **yes** to confirm, or tell me what you’d like to change.";
+    const result = "Created “Intro” as a reusable 30-minute meeting type.";
+    const messages = [result, confirmation].map((content, index) => ({
+      id: `a${index}`,
+      role: "assistant",
+      content,
+      status: "final",
+      created_at: "2026-11-05T00:00:00Z",
+    }));
+    const receipts = ["create_event_type", "reschedule_booking", "cancel_booking", "create_booking"].map(
+      (kind) => ({
+        action_id: kind,
+        kind,
+        summary: `Result for ${kind}`,
+        details: { booking_uid: "confirmed-booking" },
+      }),
+    );
+    let historyReads = 0;
+    let events!: ReadableStreamDefaultController<Uint8Array>;
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async (url: string) => {
+        if (url.endsWith("/history"))
+          return json(
+            ++historyReads === 1
+              ? { messages: [], receipts: [], next_cursor: null }
+              : { messages, receipts, next_cursor: null },
+          );
+        if (url.endsWith("/connection")) return json({ connected: true });
+        if (url === "/api/chat/messages") return json({ run_id: "run-1", message_id: "u", revision: 1 });
+        if (url.includes("/events"))
+          return new Response(
+            new ReadableStream<Uint8Array>({
+              start(controller) {
+                events = controller;
+              },
+            }),
+          );
+        throw new Error(`Unexpected request: ${url}`);
+      }),
+    );
+    render(<Chat user={user} />);
+    await screen.findByRole("heading", { name: "What’s on your calendar?" });
+    fireEvent.change(screen.getByRole("textbox"), { target: { value: "Book a meeting" } });
+    fireEvent.click(screen.getByRole("button", { name: "Send message" }));
+    await screen.findByRole("button", { name: "Stop response" });
+    await act(async () => {
+      const frames = [
+        ...receipts.map((data) => ({ type: "action.result", data })),
+        ...messages.map((message) => ({
+          type: "message.delta",
+          data: { message_id: message.id, text: message.content },
+        })),
+      ];
+      events.enqueue(
+        new TextEncoder().encode(
+          frames
+            .map(
+              ({ type, data }, index) =>
+                `id: ${index + 1}\nevent: ${type}\ndata: ${JSON.stringify(data)}\n\n`,
+            )
+            .join(""),
+        ),
+      );
+    });
+    const assertDisplay = () => {
+      expect(screen.getAllByText("Shall I create “Intro” as a reusable meeting type?")).toHaveLength(1);
+      expect(screen.getByText("30 minutes")).toBeInTheDocument();
+      expect(screen.getByText("Cal Video")).toBeInTheDocument();
+      expect(screen.getByText(result).closest("article")).toHaveClass("message-assistant");
+      expect(document.querySelectorAll(".receipt")).toHaveLength(1);
+      expect(screen.getByText("create booking")).toBeInTheDocument();
+      for (const kind of ["create_event_type", "reschedule_booking", "cancel_booking"])
+        expect(screen.queryByText(`Result for ${kind}`)).not.toBeInTheDocument();
+    };
+    assertDisplay();
+    await act(async () => {
+      events.enqueue(
+        new TextEncoder().encode(
+          `id: 7\nevent: run.waiting\ndata: ${JSON.stringify({ message: confirmation })}\n\n`,
+        ),
+      );
+    });
+    await waitFor(() => expect(historyReads).toBe(2));
+    expect(screen.queryByRole("button", { name: "Stop response" })).not.toBeInTheDocument();
+    assertDisplay();
+    expect(document.querySelector(".run-status")).not.toBeInTheDocument();
+  });
+
   it("copies each user and agent message verbatim with independent feedback", async () => {
     const writeText = vi.fn().mockResolvedValue(undefined);
     Object.defineProperty(navigator, "clipboard", { configurable: true, value: { writeText } });

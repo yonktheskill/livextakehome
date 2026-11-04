@@ -1,8 +1,8 @@
 "use client";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { api, ApiError, type History, type Message } from "./api";
+import { api, ApiError, type History, type Message, type Receipt } from "./api";
 import { SSEParser, terminalEvents, type StreamEvent } from "./sse";
-export type Receipt = { action_id: string; kind: string; summary: string; details: unknown };
+export type { Receipt } from "./api";
 type Submission = { content: string; client_request_id: string };
 type Accepted = { run_id: string; message_id: string; revision: number };
 export function useConversation(userId: string | number, onUnauthorized: () => void) {
@@ -95,7 +95,8 @@ export function useConversation(userId: string | number, onUnauthorized: () => v
                     role: "assistant",
                     content: text,
                     status: "streaming",
-                    created_at: new Date().toISOString(),
+                    created_at:
+                      typeof data.created_at === "string" ? data.created_at : new Date().toISOString(),
                   },
                 ];
           });
@@ -105,10 +106,19 @@ export function useConversation(userId: string | number, onUnauthorized: () => v
           frame.type === "action.result" &&
           typeof data.action_id === "string" &&
           typeof data.summary === "string" &&
-          typeof data.kind === "string"
+          data.kind === "create_booking"
         ) {
-          const receipt = data as Receipt;
-          setReceipts((previous) => [...previous.filter((r) => r.action_id !== receipt.action_id), receipt]);
+          setReceipts((previous) => {
+            const existing = previous.find((r) => r.action_id === data.action_id);
+            const receipt = {
+              ...data,
+              created_at:
+                typeof data.created_at === "string"
+                  ? data.created_at
+                  : (existing?.created_at ?? new Date().toISOString()),
+            } as Receipt;
+            return [...previous.filter((r) => r.action_id !== receipt.action_id), receipt];
+          });
         }
         if (terminalEvents.has(frame.type)) {
           terminal = true;
@@ -118,9 +128,7 @@ export function useConversation(userId: string | number, onUnauthorized: () => v
           setStatus(
             frame.type === "run.interrupted"
               ? "Stopped at a safe checkpoint. Completed actions remain in your history."
-              : frame.type === "run.waiting" && typeof data.message === "string"
-                ? data.message
-                : "",
+              : "",
           );
           if (frame.type === "run.failed")
             setError(

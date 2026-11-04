@@ -10,7 +10,7 @@ All backend paths retain `/api` through the Next.js same-origin proxy. JSON erro
 - `PATCH /api/auth/me`: `{time_zone}` (IANA timezone) → updated user object. The choice persists across sessions and takes precedence over the Cal.com timezone on reconnect. Changing it interrupts active runs and supersedes undispatched plans based on the old timezone; already dispatched actions may finish.
 - `GET /api/connection` → `{connected:boolean, label:string|null}` (masked only).
 - `PUT /api/connection`: `{api_key}` → masked connection status. `DELETE /api/connection` disconnects integration, not app account.
-- `GET /api/chat/history` → `{messages:[{id,role,content,created_at,status}], next_cursor:string|null}`; optional `before` cursor, chronological order within page.
+- `GET /api/chat/history` → `{messages:[{id,role,content,created_at,status}], receipts:[{action_id,kind,summary,details}], next_cursor:string|null}`; optional `before` cursor, chronological order within page. Receipts contain only booking creation; other completed actions appear as readable assistant messages.
 - `POST /api/chat/messages`: `{content,client_request_id}` → `{run_id,message_id,revision}`. UUID generated in browser; duplicate submission returns same result.
 - `GET /api/runs/{id}` → `{id,status}`.
 - `POST /api/runs/{id}/stop` → `{status,dispatch_committed:boolean}`.
@@ -18,6 +18,10 @@ All backend paths retain `/api` through the Next.js same-origin proxy. JSON erro
 - Event types: `message.delta` `{message_id,text}`, `tool.status` `{text}`, `action.result` `{action_id,kind,summary,details}`, `run.waiting` `{message}`, `run.completed` `{}`, `run.failed` `{message}`, `run.interrupted` `{}`. Final three are terminal for the subscription; waiting is terminal for this run too.
 
 Frontend must render safe Markdown, action receipts, readable errors and reconnection states; reload canonical history and never resubmit a message to reconnect. Credentials are never persisted in browser storage. Confirmation can use plain text yes/no through the same message endpoint.
+
+Only `action.result` events with `kind: "create_booking"` render a result card. Event-type creation, rescheduling and cancellation also publish their readable result through `message.delta`. Confirmation questions arrive through `message.delta` and remain in chat history; `run.waiting` ends the run and clears progress text without displaying the same question again.
+
+Receipts in history and new `action.result` events also include `message_id` and `created_at` (ISO UTC) from the canonical action-result message. Clients interleave cards with chat messages using this creation time and the anchor ID for ties, inside the conversation scroll area. `message.delta` events include the canonical message's `created_at` as well, so live order does not depend on the browser clock. Existing receipt anchors supply these fields on history reads without a database migration.
 
 Chat content rejected by local profanity/credential/instruction-override checks returns HTTP 422 with a safe `detail`, without creating a message/run or changing the conversation revision. A corrected submission can reuse that UUID. Model text is buffered and checked as a complete response before `message.delta` is persisted/published; clients must support a full reply in a single delta. An unchecked partial response is discarded on provider failure or interruption. A blocked response emits a fixed safe notice and `run.failed`. Earlier successful action receipts remain valid. History and replay filter legacy content at read time, including prohibited terms split across old delta events, without rewriting private action evidence.
 

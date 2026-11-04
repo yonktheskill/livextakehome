@@ -2,6 +2,7 @@ import json
 from uuid import uuid4
 
 import pytest
+from test_tools import fixture_executor
 
 from app.agent.context import assemble, retrieve
 from app.agent.runner import Runner
@@ -105,6 +106,41 @@ async def test_confirmation_prompt_starts_a_new_paragraph(account):
     assert Run.get_by_id(run_id).status == "waiting_for_user"
     message = Message.get(Message.client_request_id == f"assistant:{run_id}")
     assert message.content == "I found the booking.\n\nConfirm cancellation of this exact booking."
+
+
+@pytest.mark.asyncio
+async def test_event_type_confirmation_is_persisted_and_streamed_as_readable_chat(account):
+    user, vault = account
+    run_id = accept(user, "Book a 30-minute meeting", str(uuid4()))["run_id"]
+    provider = FakeProvider(
+        steps=[
+            [
+                ProviderEvent(
+                    "tool_call",
+                    name="create_event_type",
+                    call_id="create-type",
+                    arguments={"title": "30-minute meeting", "duration_minutes": 30},
+                )
+            ]
+        ]
+    )
+    posts = []
+    runner = Runner(Settings(llm_provider="fake"), vault, provider)
+    runner.executor = fixture_executor(vault, posts)
+    await runner.execute(run_id)
+
+    assert not posts
+    assert Run.get_by_id(run_id).status == "waiting_for_user"
+    message = Message.get(Message.client_request_id == f"assistant:{run_id}")
+    assert "Shall I create “30-minute meeting” as a reusable meeting type?" in message.content
+    assert "**Duration:** 30 minutes" in message.content
+    assert '"duration_minutes"' not in message.content
+    delta = Event.get((Event.run == run_id) & (Event.kind == "message.delta"))
+    assert json.loads(delta.payload) == {"message_id": message.id, "text": message.content}
+    assert all(
+        message.content not in event.payload
+        for event in Event.select().where((Event.run == run_id) & (Event.kind == "tool.status"))
+    )
 
 
 @pytest.mark.asyncio

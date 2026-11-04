@@ -134,14 +134,25 @@ describe("conversation delivery and recovery", () => {
   });
   it("resumes a remembered run without posting a message", async () => {
     sessionStorage.setItem("daylight-run:1", "remembered");
+    const confirmation = {
+      id: "confirmation",
+      role: "assistant",
+      content: "Shall I create a reusable 30-minute meeting type?",
+      status: "final",
+      created_at: "2026-11-05T00:00:00Z",
+    };
     const fetcher = vi.fn(async (url: string) =>
       url.includes("history")
-        ? json({ messages: [], next_cursor: null })
-        : stream('id: 1\nevent: run.waiting\ndata: {"message":"Please confirm the booking."}\n\n'),
+        ? json({ messages: [confirmation], next_cursor: null })
+        : stream(
+            `id: 1\nevent: message.delta\ndata: ${JSON.stringify({ message_id: confirmation.id, text: confirmation.content })}\n\nid: 2\nevent: run.waiting\ndata: ${JSON.stringify({ message: confirmation.content })}\n\n`,
+          ),
     );
     vi.stubGlobal("fetch", fetcher);
     const { result } = renderHook(() => useConversation(1, authorized));
-    await waitFor(() => expect(result.current.status).toBe("Please confirm the booking."));
+    await waitFor(() => expect(sessionStorage.getItem("daylight-run:1")).toBeNull());
+    expect(result.current.status).toBe("");
+    expect(result.current.messages).toEqual([confirmation]);
     expect(fetcher.mock.calls.some(([url]) => url.includes("remembered/events?after=0"))).toBe(true);
     expect(fetcher.mock.calls.some(([url]) => url === "/api/chat/messages")).toBe(false);
   });
@@ -154,7 +165,7 @@ describe("conversation delivery and recovery", () => {
         eventReads++;
         return eventReads === 1
           ? stream('id: 7\nevent: tool.status\ndata: {"text":"Checking availability"}\n\n')
-          : stream('id: 8\nevent: run.waiting\ndata: {"message":"Which time works?"}\n\n');
+          : stream("id: 8\nevent: run.completed\ndata: {}\n\n");
       }
       return json({ id: "r", status: "running" });
     });
@@ -164,7 +175,8 @@ describe("conversation delivery and recovery", () => {
     await act(async () => {
       await result.current.submit("Find a time");
     });
-    await waitFor(() => expect(result.current.status).toBe("Which time works?"), { timeout: 2500 });
+    await waitFor(() => expect(eventReads).toBe(2), { timeout: 2500 });
+    await waitFor(() => expect(result.current.run).toBeNull());
     const reconnected = fetcher.mock.calls.find(([url]) => url.includes("events?after=7"));
     expect(reconnected).toBeDefined();
     expect(fetcher.mock.calls.filter(([url]) => url === "/api/chat/messages")).toHaveLength(1);

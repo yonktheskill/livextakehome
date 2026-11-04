@@ -110,3 +110,43 @@ def test_settlement_and_canonical_receipt_are_atomic(account, monkeypatch):
     assert Action.get_by_id(action_id).state == "succeeded"
     assert Event.select().where(Event.kind == "action.result").count() == 1
     assert Message.get(Message.client_request_id == f"action:{action_id}").content
+
+
+@pytest.mark.parametrize(
+    "response, expected",
+    [
+        (
+            {"status": "accepted", "start": "2026-11-06T04:00:00Z"},
+            "Friday, 6 November 2026 at 12:00 (Asia/Singapore)",
+        ),
+        ({"status": "pending"}, "Sent the reschedule request"),
+        ({"status": "accepted", "start": "Unavailable"}, "Unavailable"),
+    ],
+)
+def test_reschedule_chat_uses_returned_status_and_times_without_losing_settlement(
+    account, response, expected
+):
+    user, _ = account
+    user.time_zone = "Asia/Singapore"
+    user.save()
+    run, conn = proposal(user, "reschedule")
+    action_id, _ = prepare_action(run, conn, "reschedule_booking", "{}", "fp", False)
+    assert claim(action_id)
+    assert settle(
+        action_id,
+        "succeeded",
+        {
+            "response": {"uid": "abc", "title": "Intro", **response},
+            "validated": {"start": "2026-11-05T04:00:00Z", "status": "accepted"},
+        },
+    )
+    assert Action.get_by_id(action_id).state == "succeeded"
+    message = Message.get(Message.client_request_id == f"action:{action_id}")
+    assert expected in message.content
+    assert "5 November" not in message.content
+    assert "2026-11-05" not in message.content
+    if response["status"] == "pending":
+        assert "Rescheduled" not in message.content
+        assert "**pending**" in message.content
+    delta = Event.get(Event.kind == "message.delta")
+    assert json.loads(delta.payload)["text"] == message.content

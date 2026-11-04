@@ -27,8 +27,16 @@ export async function api<T>(path: string, init: RequestInit = {}): Promise<T> {
 export type User = { id: string | number; email: string; time_zone: string };
 export type Connection = { connected: boolean; label: string | null };
 export type Message = { id: string; role: string; content: string; created_at: string; status: string };
+export type Receipt = {
+  action_id: string;
+  message_id?: string | null;
+  created_at?: string;
+  kind: string;
+  summary: string;
+  details: unknown;
+};
 export type History = {
   messages: Message[];
   next_cursor: string | null;
-  receipts?: { action_id: string; kind: string; summary: string; details: unknown }[];
+  receipts?: Receipt[];
 };
