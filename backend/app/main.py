@@ -9,7 +9,7 @@ from fastapi.exceptions import RequestValidationError
 from fastapi.responses import JSONResponse
 from pydantic import ValidationError
 
-from app.api import auth, chat, connection
+from app.api import attachments, auth, chat, connection
 from app.core.config import Settings
 from app.core.security import KeyVault, digest
 from app.db.database import initialize, query
@@ -133,6 +133,13 @@ def create_app(settings=None, provider=None):
     @app.middleware("http")
     async def guards(request: Request, call_next):
         if request.method in {"POST", "PUT", "PATCH", "DELETE"}:
+            limit = 2 * 1024 * 1024 if request.url.path == "/api/chat/attachments" else 32_768
+            body = bytearray()
+            async for chunk in request.stream():
+                if len(body) + len(chunk) > limit:
+                    return JSONResponse({"detail": "Request body is too large."}, status_code=413)
+                body.extend(chunk)
+            request._body = bytes(body)
             origin = request.headers.get("origin")
             if origin and origin.rstrip("/") != settings.public_origin.rstrip("/"):
                 return JSONResponse({"detail": "Origin is not allowed."}, status_code=403)
@@ -196,6 +203,7 @@ def create_app(settings=None, provider=None):
     app.include_router(auth.router)
     app.include_router(connection.router)
     app.include_router(chat.router)
+    app.include_router(attachments.router)
     return app
 
 

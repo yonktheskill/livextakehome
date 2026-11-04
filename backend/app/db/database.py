@@ -22,11 +22,11 @@ def initialize(path: str):
     with db.connection_context(), db.atomic("IMMEDIATE"):
         db.create_tables([SchemaVersion])
         version = SchemaVersion.select().order_by(SchemaVersion.version.desc()).first()
-        if version and version.version > 5:
+        if version and version.version > 6:
             raise RuntimeError("Database schema is newer than this application")
         if not version:
             db.create_tables(TABLES)
-            SchemaVersion.create(version=5)
+            SchemaVersion.create(version=6)
         elif version.version == 1:
             migrator = SqliteMigrator(db)
             migrate(
@@ -76,6 +76,12 @@ def initialize(path: str):
 
             backfill_legacy_requests()
             SchemaVersion.create(version=5)
+
+        if version and version.version < 6:
+            from app.db.models import Attachment, Extraction
+
+            db.create_tables([Attachment, Extraction])
+            SchemaVersion.create(version=6)
 
 
 async def query(fn, *args, **kwargs):

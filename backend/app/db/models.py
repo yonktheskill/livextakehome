@@ -6,6 +6,7 @@ from typing import TYPE_CHECKING
 
 from peewee import (
     AutoField,
+    BlobField,
     BooleanField,
     CharField,
     FloatField,
@@ -70,6 +71,28 @@ class Message(Base):
 
     class Meta:
         indexes = ((("conversation", "client_request_id"), True),)
+
+
+class Attachment(Base):
+    """Private normalized image; originals are never retained."""
+
+    id = CharField(primary_key=True, default=uid)
+    owner = ForeignKeyField(User, on_delete="CASCADE")
+    message = ForeignKeyField(Message, null=True, on_delete="CASCADE")
+    position = IntegerField(default=0)
+    mime_type = CharField()
+    width = IntegerField()
+    height = IntegerField()
+    size_bytes = IntegerField()
+    sha256 = CharField()
+    data = BlobField()
+    created_at = FloatField(default=time.time, index=True)
+
+
+class Extraction(Base):
+    message = ForeignKeyField(Message, unique=True, on_delete="CASCADE")
+    version = IntegerField()
+    observations = TextField()
 
 
 class Run(Base):
@@ -170,6 +193,8 @@ TABLES = [
     Connection,
     Conversation,
     Message,
+    Attachment,
+    Extraction,
     Run,
     Event,
     BookingRequest,

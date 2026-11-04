@@ -45,7 +45,7 @@ def test_version_one_dispatch_evidence_upgrade(database):
         assert {"logical_key", "request"}.issubset({c.name for c in db.get_columns("action")})
         assert Action.get_by_id(old_action.id).state == "superseded"
         assert Confirmation.select().count() == 1
-        assert SchemaVersion.select().order_by(SchemaVersion.version.desc()).get().version == 5
+        assert SchemaVersion.select().order_by(SchemaVersion.version.desc()).get().version == 6
         assert User.get_by_id(user.id).preferred_name is None
         assert not User.get_by_id(user.id).time_zone_manual
     initialize(path)

@@ -5,6 +5,7 @@ import json
 from pathlib import Path
 
 from app.core.config import Settings
+from app.db.attachments import cleanup_abandoned
 from app.db.database import initialize
 from app.db.dispatch import inspect_unknown, resolve_unknown
 from app.db.models import Action, db
@@ -16,6 +17,7 @@ def main(argv=None):
     sub = parser.add_subparsers(dest="command", required=True)
     sub.add_parser("migrate")
     sub.add_parser("cleanup-traces")
+    sub.add_parser("cleanup-attachments")
     sub.add_parser("list-unknown")
     inspect = sub.add_parser("inspect-action")
     inspect.add_argument("action_id")
@@ -31,6 +33,8 @@ def main(argv=None):
     with db.connection_context():
         if args.command == "cleanup-traces":
             print(f"Removed {cleanup()} expired trace records")
+        elif args.command == "cleanup-attachments":
+            print(f"Removed {cleanup_abandoned()} abandoned image uploads")
         elif args.command == "list-unknown":
             print(
                 json.dumps(
