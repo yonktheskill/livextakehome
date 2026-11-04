@@ -1,4 +1,6 @@
 # HelpBook — conversational Cal.com booking assistant
+<img width="1918" height="963" alt="image" src="https://github.com/user-attachments/assets/ffab8447-5040-4295-b439-1b0307441b8a" />
+
 
 Python/FastAPI backend, Peewee/SQLite storage, and Next.js/TypeScript frontend with Tailwind CSS and free Headless UI. Design and product decisions: [PLAN.md](PLAN.md). API boundary: [docs/API_CONTRACT.md](docs/API_CONTRACT.md).
 
