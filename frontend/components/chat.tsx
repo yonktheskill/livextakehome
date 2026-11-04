@@ -1,16 +1,15 @@
 "use client";
 import { useCallback, useEffect, useRef, useState } from "react";
 import { Button, Textarea } from "@headlessui/react";
-import { ArrowDown, ArrowUp, BookOpen, LogOut, RefreshCw, Square } from "lucide-react";
+import { ArrowDown, ArrowUp, BookOpen, RefreshCw, Square } from "lucide-react";
 import { useAuth } from "./auth";
 import { api, ApiError, type Connection, type User } from "../lib/api";
 import { useConversation } from "../lib/use-conversation";
 import { ConnectionDialog } from "./connection-dialog";
-import { ChatSidebar } from "./chat-sidebar";
+import { ChatHeader } from "./chat-header";
 import { ActionReceipt, Welcome } from "./chat-content";
 import { SafeMarkdown } from "./markdown";
 import { MessageCopy } from "./message-copy";
-import { Brand } from "./brand";
 export function Chat({ user }: { user: User }) {
   const { logout, refresh } = useAuth();
   const chat = useConversation(user.id, refresh);
@@ -75,7 +74,7 @@ export function Chat({ user }: { user: User }) {
   }
   return (
     <div className="app-shell">
-      <ChatSidebar
+      <ChatHeader
         user={user}
         connection={connection}
         loggingOut={loggingOut}
@@ -83,24 +82,6 @@ export function Chat({ user }: { user: User }) {
         onSignOut={signOut}
       />
       <main className="chat-main">
-        <header className="chat-header">
-          <Brand className="mobile-brand" />
-          <div className="header-actions">
-            <span className="timezone">{user.time_zone}</span>
-            <Button className="connection-pill" onClick={() => setDialog(true)}>
-              <span className={`status-dot ${connection?.connected ? "" : "offline"}`} />
-              {connection?.connected ? "Cal.com connected" : "Connect Cal.com"}
-            </Button>
-            <Button
-              className="mobile-logout icon-button"
-              aria-label="Sign out"
-              onClick={() => void signOut()}
-              disabled={loggingOut}
-            >
-              <LogOut size={18} />
-            </Button>
-          </div>
-        </header>
         {(connectionError || accountError) && (
           <div role="alert" className="top-error">
             {connectionError || accountError}

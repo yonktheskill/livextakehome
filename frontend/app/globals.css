@@ -278,62 +278,9 @@ label {
 }
 .app-shell {
   display: flex;
+  flex-direction: column;
   height: 100dvh;
   overflow: hidden;
-}
-.sidebar {
-  width: 260px;
-  flex-shrink: 0;
-  background: var(--background-darker);
-  border-right: 1px solid var(--selection);
-  display: flex;
-  flex-direction: column;
-  padding: 32px 21px 24px;
-}
-.sidebar > .brand {
-  margin: 0 4px 32px;
-}
-.active-nav {
-  display: flex;
-  gap: 12px;
-  align-items: center;
-  background: var(--selection);
-  padding: 12px 14px;
-  border-radius: 8px;
-  font-size: 17px;
-  color: var(--blue);
-  font-weight: 600;
-}
-.sidebar-bottom {
-  border-top: 1px solid var(--selection);
-  padding-top: 18px;
-  margin-top: auto;
-}
-.connection-card {
-  width: 100%;
-  background: var(--background);
-  border: 1px solid var(--selection);
-  display: flex;
-  align-items: center;
-  padding: 12px 10px;
-  border-radius: 9px;
-  text-align: left;
-  gap: 10px;
-  color: var(--foreground);
-}
-.connection-card strong {
-  display: block;
-  font-size: 14px;
-  font-weight: 600;
-}
-.connection-card small {
-  display: block;
-  color: var(--foreground);
-  font-size: 14px;
-  max-width: 140px;
-  white-space: nowrap;
-  overflow: hidden;
-  text-overflow: ellipsis;
 }
 .status-dot {
   display: inline-block;
@@ -343,9 +290,6 @@ label {
   background: var(--green);
   border-radius: 50%;
 }
-.connection-card > .status-dot {
-  margin-left: auto;
-}
 .status-dot.offline {
   background: var(--gutter);
 }
@@ -353,12 +297,24 @@ label {
   display: flex;
   align-items: center;
   gap: 10px;
-  width: 100%;
-  border: 0;
-  background: none;
-  padding: 18px 0 0;
+  max-width: 260px;
+  min-width: 0;
+  flex-shrink: 0;
+  border: 1px solid var(--selection);
+  border-radius: 10px;
+  background: var(--background-dark);
+  padding: 6px 10px 6px 6px;
   color: var(--foreground);
   font-size: 14px;
+}
+.account-button[data-open] {
+  border-color: var(--blue);
+}
+.account-chevron {
+  flex-shrink: 0;
+}
+.account-button[data-open] .account-chevron {
+  transform: rotate(180deg);
 }
 .avatar {
   display: grid;
@@ -380,12 +336,15 @@ label {
   text-align: left;
 }
 .account-menu {
+  --anchor-gap: 10px;
+  --anchor-padding: 12px;
   z-index: 30;
   background: var(--background-dark);
   border: 1px solid var(--selection);
   border-radius: 10px;
   padding: 5px;
-  width: 200px;
+  width: 240px;
+  max-width: calc(100vw - 24px);
   box-shadow: 0 8px 30px color-mix(in srgb, var(--background-darker) 45%, transparent);
 }
 .menu-item {
@@ -402,51 +361,64 @@ label {
 .menu-item[data-focus] {
   background: var(--selection);
 }
+.connection-menu-label {
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+}
+.connection-menu-label small {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  color: var(--muted);
+  font-size: 12px;
+}
 .chat-main {
   flex: 1;
   min-width: 0;
+  min-height: 0;
   display: flex;
   flex-direction: column;
   position: relative;
   background: var(--background);
 }
 .chat-header {
-  padding: 18px 38px;
+  padding: 14px 32px;
+  background: var(--background-darker);
   border-bottom: 1px solid var(--selection);
   display: flex;
   align-items: center;
-  justify-content: flex-end;
-  gap: 20px;
+  justify-content: space-between;
+  gap: 24px;
   min-height: 72px;
+  flex-shrink: 0;
+}
+.chat-header > .brand {
   flex-shrink: 0;
 }
 .header-actions {
   display: flex;
   align-items: center;
   gap: 18px;
+  min-width: 0;
+  margin-left: auto;
 }
 .timezone {
   display: flex;
   align-items: center;
   gap: 6px;
-  color: var(--foreground);
+  min-width: 0;
+  color: var(--muted);
   font-size: 14px;
 }
-.connection-pill {
-  display: flex;
-  align-items: center;
-  gap: 7px;
-  border: 1px solid var(--selection);
-  background: var(--background);
-  padding: 6px 10px;
-  border-radius: 20px;
-  font-size: 14px;
-  color: var(--foreground);
+.timezone > svg {
+  flex-shrink: 0;
+}
+.timezone-value {
+  max-width: 240px;
+  overflow: hidden;
+  text-overflow: ellipsis;
   white-space: nowrap;
-}
-.mobile-brand,
-.mobile-logout {
-  display: none;
 }
 .connection-banner {
   display: flex;
@@ -1001,16 +973,8 @@ label {
   }
 }
 @media (max-width: 1050px) {
-  .sidebar {
-    width: 220px;
-    padding-left: 15px;
-    padding-right: 15px;
-  }
   .chat-header {
-    padding: 22px 26px;
-  }
-  .timezone {
-    display: none;
+    padding: 14px 26px;
   }
   .conversation-content {
     padding-left: 30px;
@@ -1029,37 +993,41 @@ label {
   }
 }
 @media (max-width: 760px) {
-  .sidebar {
-    display: none;
-  }
-  .mobile-brand {
-    display: flex;
+  .chat-header > .brand {
     gap: 8px;
     font-size: 20px;
     font-weight: 600;
     letter-spacing: -1px;
   }
-  .mobile-brand .brand-icon {
+  .chat-header .brand-icon {
     width: 30px;
     height: 30px;
     border-radius: 8px;
   }
   .chat-header {
-    padding: 14px 16px;
-    justify-content: space-between;
-    flex-wrap: wrap;
+    padding: 12px 16px;
+    min-height: 68px;
     gap: 12px;
   }
   .header-actions {
     gap: 8px;
-    margin-left: auto;
   }
-  .mobile-logout {
-    display: grid;
+  .timezone {
+    font-size: 12px;
   }
-  .connection-pill {
-    font-size: 14px;
-    padding: 5px 8px;
+  .timezone > svg {
+    display: none;
+  }
+  .account-button {
+    padding: 5px;
+    gap: 6px;
+  }
+  .account-email {
+    display: none;
+  }
+  .account-button .avatar {
+    width: 30px;
+    height: 30px;
   }
   .conversation-content {
     padding: 20px;
