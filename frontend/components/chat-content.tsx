@@ -2,7 +2,33 @@
 import { Button } from "@headlessui/react";
 import { Check } from "lucide-react";
 import type { Receipt } from "../lib/use-conversation";
-export function ActionReceipt({ receipt }: { receipt: Receipt }) {
+
+function formatReceiptDateTime(value: string, timeZone: string) {
+  const date = new Date(value);
+  if (Number.isNaN(date.getTime())) return value;
+
+  const options: Intl.DateTimeFormatOptions = {
+    timeZone,
+    weekday: "long",
+    day: "2-digit",
+    month: "2-digit",
+    year: "numeric",
+    hour: "2-digit",
+    minute: "2-digit",
+    hourCycle: "h23",
+  };
+  let formatter: Intl.DateTimeFormat;
+  try {
+    formatter = new Intl.DateTimeFormat("en-GB", options);
+  } catch {
+    timeZone = "UTC";
+    formatter = new Intl.DateTimeFormat("en-GB", { ...options, timeZone });
+  }
+  const parts = Object.fromEntries(formatter.formatToParts(date).map(({ type, value }) => [type, value]));
+  return `${parts.weekday}, ${parts.day}-${parts.month}-${parts.year}, ${parts.hour}:${parts.minute} ${timeZone}`;
+}
+
+export function ActionReceipt({ receipt, timeZone }: { receipt: Receipt; timeZone: string }) {
   // Only explicit, user-facing fields are rendered. Never stringify arbitrary tool payloads.
   const details =
     receipt.details && typeof receipt.details === "object"
@@ -21,7 +47,11 @@ export function ActionReceipt({ receipt }: { receipt: Receipt }) {
           typeof details[key] === "string" || typeof details[key] === "number" ? (
             <div key={key}>
               <dt>{key.replaceAll("_", " ")}</dt>
-              <dd>{String(details[key])}</dd>
+              <dd>
+                {(key === "start" || key === "end") && typeof details[key] === "string"
+                  ? formatReceiptDateTime(details[key], timeZone)
+                  : String(details[key])}
+              </dd>
             </div>
           ) : null,
         )}

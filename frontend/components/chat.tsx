@@ -173,7 +173,7 @@ export function Chat({ user }: { user: User }) {
                     </article>
                   ))}
                 {chat.receipts.map((receipt) => (
-                  <ActionReceipt key={receipt.action_id} receipt={receipt} />
+                  <ActionReceipt key={receipt.action_id} receipt={receipt} timeZone={user.time_zone} />
                 ))}
               </>
             )}
