@@ -28,8 +28,22 @@ def account(database):
     return user, vault
 
 
-def start_test_run(run_id):
-    """Direct unit executors bypass the consumer, so explicitly acquire a run lease."""
-    from app.db.models import Run
+def start_test_run(run_id, *, resolve_inbox=True):
+    """Acquire a lease for isolated unit tests, with semantic inbox out of scope.
+
+    Request/integration tests opt out and exercise real semantic resolution tools.
+    """
+    import json
+
+    from app.db.models import RequestInbox, Run
 
     Run.update(status="running").where(Run.id == run_id).execute()
+    if resolve_inbox:
+        run = Run.get_by_id(run_id)
+        RequestInbox.update(
+            state="resolved",
+            resolution=json.dumps({"input": [], "result": []}),
+            resolved_run_id=run_id,
+        ).where(
+            (RequestInbox.conversation == run.conversation_id) & (RequestInbox.state == "pending")
+        ).execute()

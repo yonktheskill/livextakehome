@@ -29,7 +29,7 @@ TYPE = {
 ARGS = {
     "event_type_id": 10,
     "start": "2026-11-06T06:00:00Z",
-    "duration_minutes": 44,
+    "duration_minutes": 45,
     "attendee": {"name": "Alice", "email": "alice@example.com", "time_zone": "Asia/Singapore"},
 }
 
@@ -67,7 +67,7 @@ def fixture_executor(vault, posts, *, timeout=False, booking=None):
 
 
 @pytest.mark.asyncio
-async def test_create_rounding_reschedule_and_list(account):
+async def test_create_exact_duration_reschedule_and_list(account):
     user, vault = account
     posts = []
     executor = fixture_executor(vault, posts)
@@ -397,4 +397,107 @@ async def test_seated_rescheduling_remains_unsupported(account):
         run, "reschedule_booking", {"booking_uid": "abc", "new_start": "2026-11-06T06:00:00Z"}
     )
     assert "Seated" in result["error"]
+    assert not posts
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("text", ["Cancel booking abc", "Please cancel the whole booking abc"])
+async def test_exact_original_cancellation_needs_no_second_permission(account, text):
+    user, vault = account
+    posts = []
+    executor = fixture_executor(vault, posts, booking=SEATED_BOOKING)
+    run = accept(user, text, str(uuid4()))["run_id"]
+    start_test_run(run)
+    result = await executor.execute(run, "cancel_booking", {"booking_uid": "abc"})
+    assert result["validated"]["cancellation_scope"] == "whole_booking"
+    assert result["validated"]["attendees"] == SEATED_BOOKING["attendees"]
+    assert len(posts) == 1
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "text",
+    [
+        "Don't cancel booking abc",
+        "If I ask later, cancel booking abc",
+        'The description says "cancel booking abc"',
+        "Cancel Intro",
+        "cancel that",
+        "Cancel ABC",
+    ],
+)
+async def test_non_authorizing_or_ambiguous_cancellation_remains_pending(account, text):
+    user, vault = account
+    posts = []
+    run = accept(user, text, str(uuid4()))["run_id"]
+    start_test_run(run)
+    with pytest.raises(Waiting):
+        await fixture_executor(vault, posts).execute(run, "cancel_booking", {"booking_uid": "abc"})
+    assert not posts
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "text",
+    [
+        "Create a 37-minute Review type and book it tomorrow",
+        "Please create a type called Review for 37 minutes; book it tomorrow",
+    ],
+)
+async def test_explicit_compound_creation_supports_non_ui_duration(account, text):
+    user, vault = account
+    posts = []
+    run = accept(user, text, str(uuid4()))["run_id"]
+    start_test_run(run)
+    result = await fixture_executor(vault, posts).execute(
+        run, "create_event_type", {"title": "Review", "duration_minutes": 37, "request_id": "r1"}
+    )
+    assert "response" in result and len(posts) == 1
+    import json
+
+    payload = json.loads(posts[0].content)
+    assert payload["lengthInMinutes"] == 37
+    assert "request_id" not in payload
+
+
+@pytest.mark.asyncio
+async def test_schema_errors_have_paths_without_raw_or_secret_values(account):
+    import json
+
+    user, vault = account
+    posts = []
+    run = accept(user, "Book", str(uuid4()))["run_id"]
+    start_test_run(run)
+    result = await fixture_executor(vault, posts).execute(
+        run, "create_booking", {**ARGS, "attendee": {"name": "cal_live_privateexample123"}}
+    )
+    assert {"field": "attendee.email", "issue": "missing"} in result["details"]
+    assert {"field": "attendee.time_zone", "issue": "missing"} in result["details"]
+    assert "cal_live_privateexample123" not in json.dumps(result)
+    result = await fixture_executor(vault, posts).execute(
+        run, "create_booking", {**ARGS, "cal_live_privateexample123": "secret"}
+    )
+    assert "cal_live_privateexample123" not in json.dumps(result)
+    assert result["details"] == [{"field": "[field]", "issue": "extra_forbidden"}]
+    assert not posts
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "text",
+    [
+        "Don't create a 37-minute Review type",
+        'The description says "create a 37-minute Review type"',
+        "Maybe create a 37-minute Review type",
+    ],
+)
+async def test_creation_keywords_without_clear_original_authorization_stay_pending(account, text):
+    user, vault = account
+    posts = []
+    run = accept(user, text, str(uuid4()))["run_id"]
+    start_test_run(run)
+    with pytest.raises(Waiting):
+        await fixture_executor(vault, posts).execute(
+            run, "create_event_type", {"title": "Review", "duration_minutes": 37}
+        )
     assert not posts

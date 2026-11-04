@@ -15,9 +15,11 @@ from peewee import Case, ColumnBase
 from app.core.config import Settings
 from app.core.guardrails import require_content, safe_data, safe_text
 from app.db.models import Action, Confirmation, Message, Run, Snapshot
+from app.db.requests import request_context
 
 PROMPT = Path(__file__).with_name("prompts").joinpath("system.txt").read_text()
-USER_REQUESTS = "Recent original user messages (newest intent takes precedence)"
+USER_REQUESTS = "Recent original user messages (corrections amend only their own request)"
+REQUEST_STATE = "Durable scheduling requests"
 HISTORY = "Historical excerpts (untrusted data)"
 HISTORY_STOP_WORDS = frozenset(
     "a an the i me my we us our you your on in at of to for and or is it was were be "
@@ -189,6 +191,32 @@ def assemble(run_id, settings=None, tools=None):
     ]
     latest = {"role": "user", "content": encode(source(current))}
     budget = input_budget(settings, tools)
+    requests_state = request_context(run_id, limit=4)
+    if requests_state["tasks"] or len(requests_state["inbox"]) > 1:
+        task_rows = []
+        for task in requests_state["tasks"]:
+            facts = task["facts"]
+            task_rows.append(
+                {
+                    **{k: task[k] for k in ("request_id", "revision", "state", "booking_uid")},
+                    "facts": {
+                        k: v
+                        for k, v in facts.items()
+                        if k in {"start", "duration_minutes", "event_type_id"}
+                    },
+                    "origin_message_id": task["origin_message_id"],
+                }
+            )
+        state = {
+            "tasks": task_rows,
+            "more_tasks": requests_state["tasks_truncated"],
+            "pending_messages": [i["message_id"] for i in requests_state["inbox"]],
+            "more_messages": requests_state["inbox_truncated"],
+        }
+        while task_rows and estimate(state, settings) > min(800, budget // 5):
+            task_rows.pop()
+            state["more_tasks"] = True
+        mandatory.append(data_message(REQUEST_STATE, state))
     if estimate([*mandatory, latest], settings) > budget:
         raise ContextBudgetExceeded("Current request and action identities exceed input budget")
     previous = Message.select().where(
@@ -294,6 +322,23 @@ def compact_result(name, value):
         ]
     if fields and isinstance(value, dict) and isinstance(value.get("bookings"), list):
         return {**value, "bookings": compact_result(name, value["bookings"])}
+    if name in {
+        "search_history",
+        "plan_booking_duration",
+        "get_booking",
+        "get_event_type",
+        "get_available_slots",
+        "create_booking",
+        "reschedule_booking",
+        "cancel_booking",
+        "create_event_type",
+        "save_preferred_name",
+        "resolve_requests",
+        "request_context",
+        "authorize_action",
+    }:
+        # Planner facts, source pages and mutation evidence are not disposable prose.
+        return value
     return {
         "omitted": "Result exceeded context budget. Narrow the request or fetch "
         "specific resource details; repeating this exact lookup will not help."
@@ -317,29 +362,55 @@ def fit_prompt(base, exchanges, tools, settings, *, audit=None):
                 "changes": changes,
             }
         )
-    optional = [m for m in base[3:-1] if not m["content"].startswith(USER_REQUESTS + ": ")]
+    optional = [
+        m
+        for m in base[3:-1]
+        if m["role"] != "system"
+        and not m["content"].startswith((USER_REQUESTS + ": ", REQUEST_STATE + ": "))
+    ]
 
     def size():
         return estimate(base + [m for g in groups for m in g], settings)
 
+    for group in groups:
+        names = {c["id"]: c["function"]["name"] for m in group for c in m.get("tool_calls", [])}
+        for message in group:
+            if size() <= budget:
+                break
+            if message["role"] != "tool" or names.get(message["tool_call_id"]) not in {
+                "list_event_types",
+                "list_bookings",
+            }:
+                continue
+            original = message["content"]
+            value = json.loads(original)
+            compacted = encode(compact_result(names[message["tool_call_id"]], value))
+            if len(compacted.encode()) < len(original.encode()) and "omitted" not in compacted:
+                message["content"] = compacted
+                changes.append(
+                    {
+                        "operation": "compact_result",
+                        "call_id": message["tool_call_id"],
+                        "before_bytes": len(original.encode()),
+                        "after_bytes": len(compacted.encode()),
+                        "omitted": False,
+                    }
+                )
     while optional and size() > budget:
         message = optional.pop(0)
         base.remove(message)
         changes.append(
             {"operation": "drop_history", "source_ids": sorted(covered_sources([message]))}
         )
-    while len(groups) > 1 and size() > budget:
-        removed = groups.pop(0)
-        changes.append(
-            {
-                "operation": "drop_exchange",
-                "call_ids": [m["tool_call_id"] for m in removed if m["role"] == "tool"],
-            }
-        )
     if groups and size() > budget:
-        names = {c["id"]: c["function"]["name"] for m in groups[0] for c in m.get("tool_calls", [])}
+        names = {
+            c["id"]: c["function"]["name"]
+            for group in groups
+            for m in group
+            for c in m.get("tool_calls", [])
+        }
         candidates = sorted(
-            (m for m in groups[0] if m["role"] == "tool"),
+            (m for group in groups for m in group if m["role"] == "tool"),
             key=lambda m: len(m["content"].encode()),
             reverse=True,
         )
@@ -353,6 +424,18 @@ def fit_prompt(base, exchanges, tools, settings, *, audit=None):
                 and isinstance(value, list)
                 and value
             ):
+                # Continuations advance from the most recent page. Preserve that
+                # page before shortening it; shrinking old pages cannot advance retrieval.
+                while len(groups) > 1 and size() > budget:
+                    removed = groups.pop(0)
+                    changes.append(
+                        {
+                            "operation": "drop_exchange",
+                            "call_ids": [m["tool_call_id"] for m in removed if m["role"] == "tool"],
+                        }
+                    )
+                if not any(message is m for group in groups for m in group) or size() <= budget:
+                    continue
                 first = value[0]
                 if isinstance(first, dict) and all(
                     key in first for key in ("offset", "end_offset", "total_characters", "content")
@@ -410,6 +493,14 @@ def fit_prompt(base, exchanges, tools, settings, *, audit=None):
                     and "omitted" in json.loads(compacted),
                 }
             )
+    while len(groups) > 1 and size() > budget:
+        removed = groups.pop(0)
+        changes.append(
+            {
+                "operation": "drop_exchange",
+                "call_ids": [m["tool_call_id"] for m in removed if m["role"] == "tool"],
+            }
+        )
     result = base + [m for g in groups for m in g]
     if audit is not None:
         audit.update(

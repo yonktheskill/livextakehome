@@ -5,12 +5,13 @@ from types import SimpleNamespace
 from uuid import uuid4
 
 import pytest
+from request_support import accept_interpreted as accept
 
 from app.core.config import Settings
 from app.db.database import query
 from app.db.dispatch import inspect_unknown, prepare_action, resolve_unknown
 from app.db.models import Action, Connection, Event, Message, Run
-from app.db.repository import accept, claim, finish, recover, wait_for_user
+from app.db.repository import claim, finish, recover, wait_for_user
 from app.main import RateBuckets, auth_address
 from app.tools.messages import confirmation_message
 

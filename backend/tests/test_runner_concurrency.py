@@ -14,6 +14,7 @@ from app.core.config import Settings
 from app.db.database import query
 from app.db.models import Action, Conversation, Event, Message, Run, Trace, User, db
 from app.db.repository import accept, claim_run, finish, wait_for_user
+from app.db.requests import resolve_requests
 from app.main import create_app
 from app.providers.base import ProviderEvent
 from app.tools.executor import Waiting
@@ -23,7 +24,14 @@ def enqueue(label, user=None):
     if user is None:
         user = User.create(email=f"{uuid4()}@example.com", password_hash="unused")
         Conversation.create(user=user)
-    return accept(user, label, str(uuid4()))["run_id"]
+    accepted = accept(user, label, str(uuid4()))
+    # Pool tests use non-scheduling labels, so supply their semantic interpretation.
+    resolve_requests(
+        accepted["run_id"],
+        accepted["message_id"],
+        [{"relation": "dismiss", "reason": "Non-scheduling concurrency fixture"}],
+    )
+    return accepted["run_id"]
 
 
 async def wait_status(run_id, status):

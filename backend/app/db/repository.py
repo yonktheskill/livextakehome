@@ -9,6 +9,7 @@ from app.db.models import (
     Conversation,
     Event,
     Message,
+    RequestInbox,
     Run,
     Trace,
     User,
@@ -32,6 +33,18 @@ def emit(run, kind, payload):
 
 def finish(run_id, status, kind, payload):
     with db.atomic("IMMEDIATE"):
+        if status == "succeeded":
+            from app.db.requests import request_completion_state
+
+            completion = request_completion_state(run_id)
+            if not completion["complete"]:
+                status, kind = "waiting_for_user", "run.waiting"
+                payload = {
+                    **payload,
+                    **completion,
+                    "message": "Pending requests remain; interpretation, clarification "
+                    "or outcome reconciliation is required.",
+                }
         Run.update(status=status).where(Run.id == run_id).execute()
         if status != "waiting_for_user":
             Action.update(state="superseded").where(
@@ -64,6 +77,7 @@ def accept(user, content, request_id):
             time_zone=User.get_by_id(user.id).time_zone,
             client_request_id=request_id,
         )
+        RequestInbox.create(message=msg, conversation=conv)
         pending = list(
             Confirmation.select()
             .join(Action)
@@ -92,6 +106,7 @@ def accept(user, content, request_id):
         Action.update(state="superseded").where(
             (Action.run.in_(Run.select(Run.id).where(Run.conversation == conv)))
             & (Action.state.in_(["prepared", "authorized", "awaiting_confirmation"]))
+            & Action.task.is_null()
             & (Action.id != (selected.action_id if selected else ""))
         ).execute()
         run = Run.create(conversation=conv, message=msg, revision=conv.revision)
@@ -116,6 +131,9 @@ def checkpoint(run_id):
 def stop(run_id):
     with db.atomic("IMMEDIATE"):
         run = Run.get_by_id(run_id)
+        from app.db.requests import block_run_requests
+
+        block_run_requests(run_id, "stopped")
         run.interrupted = True
         run.save()
         committed = (
@@ -148,8 +166,11 @@ def claim(action_id):
             )
             .exists()
         )
+        from app.db.requests import task_claimable
+
         if (
-            action.state not in {"prepared", "authorized"}
+            not task_claimable(action)
+            or action.state not in {"prepared", "authorized"}
             or not checkpoint(run.id)
             or not conn
             or not conn.ciphertext
@@ -257,7 +278,13 @@ def wait_for_user(run_id, text):
 
 def recover():
     with db.atomic("IMMEDIATE"):
+        from app.db.requests import block_run_requests, settle_task
+
         Action.update(state="unknown").where(Action.state == "dispatching").execute()
+        for action in Action.select().where(Action.state == "unknown"):
+            settle_task(action)
+        for interrupted_run in Run.select().where(Run.status == "running"):
+            block_run_requests(interrupted_run.id, "recovery_blocked")
         # Preserve only proposals whose exact prompt and waiting commit survived.
         for action in Action.select().where(Action.state == "awaiting_confirmation"):
             if action.run.status != "waiting_for_user" or not exposed(action):
@@ -288,4 +315,8 @@ def mark_uncertain(run_id):
         Action.update(state="unknown").where(
             (Action.run == run_id) & (Action.state == "dispatching")
         ).execute()
+        from app.db.requests import settle_task
+
+        for action in Action.select().where((Action.run == run_id) & (Action.state == "unknown")):
+            settle_task(action)
         return Action.select().where((Action.run == run_id) & (Action.state == "unknown")).exists()

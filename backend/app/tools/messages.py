@@ -53,12 +53,6 @@ def confirmation_message(name, details, time_zone):
             "- **Availability:** Your default schedule",
             f"- **Minimum notice:** {'1 hour' if notice == 60 else f'{notice} minutes'}",
         ]
-        requested = details.get("requested_duration_minutes")
-        if requested is not None and requested != minutes:
-            heading += (
-                f" You asked for {requested} minutes; "
-                f"the next supported length is {minutes} minutes."
-            )
     return "\n\n".join(
         [
             heading,

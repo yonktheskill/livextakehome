@@ -22,11 +22,11 @@ def initialize(path: str):
     with db.connection_context(), db.atomic("IMMEDIATE"):
         db.create_tables([SchemaVersion])
         version = SchemaVersion.select().order_by(SchemaVersion.version.desc()).first()
-        if version and version.version > 4:
+        if version and version.version > 5:
             raise RuntimeError("Database schema is newer than this application")
         if not version:
             db.create_tables(TABLES)
-            SchemaVersion.create(version=4)
+            SchemaVersion.create(version=5)
         elif version.version == 1:
             migrator = SqliteMigrator(db)
             migrate(
@@ -56,6 +56,26 @@ def initialize(path: str):
                 'ALTER TABLE "user" ADD COLUMN "time_zone_manual" INTEGER NOT NULL DEFAULT 0'
             )
             SchemaVersion.create(version=4)
+
+        if version and version.version < 5:
+            from app.db.models import BookingRequest, RequestInbox
+
+            db.create_tables([BookingRequest, RequestInbox])
+            columns = {column.name for column in db.get_columns("action")}
+            if "task_id" not in columns:
+                db.execute_sql(
+                    'ALTER TABLE "action" ADD COLUMN "task_id" VARCHAR(255) '
+                    'REFERENCES "bookingrequest" ("id")'
+                )
+                db.execute_sql(
+                    'CREATE INDEX IF NOT EXISTS "action_task_id" ON "action" ("task_id")'
+                )
+            if "task_revision" not in columns:
+                db.execute_sql('ALTER TABLE "action" ADD COLUMN "task_revision" INTEGER')
+            from app.db.requests import backfill_legacy_requests
+
+            backfill_legacy_requests()
+            SchemaVersion.create(version=5)
 
 
 async def query(fn, *args, **kwargs):

@@ -7,7 +7,7 @@ from datetime import UTC, datetime, timedelta
 from pydantic import AnyHttpUrl, EmailStr, TypeAdapter, ValidationError
 
 from app.calcom.client import CalError, owned_booking, owned_type
-from app.tools.durations import CREATABLE_DURATIONS, duration, duration_plan
+from app.tools.durations import duration, duration_plan
 
 
 def iso(value):
@@ -166,20 +166,11 @@ def booking_answers(event_type, args):
 
 async def prepare(client, name, args, owner):
     if name == "create_event_type":
-        if args.requested_duration_minutes is not None:
-            plan = duration_plan([], args.requested_duration_minutes)
-            if args.duration_minutes != plan["effective_duration_minutes"]:
-                raise CalError(
-                    "Use plan_booking_duration: create the requested duration when allowed, "
-                    "otherwise the smallest larger creation choice."
-                )
-        if args.duration_minutes not in CREATABLE_DURATIONS:
-            plan = duration_plan([], args.duration_minutes)
-            raise CalError(
-                "Requested duration is outside the application's event-type creation choices. "
-                f"The next creatable duration is {plan['effective_duration_minutes']} minutes; "
-                "disclose the adjustment and propose that type instead."
-            )
+        if (
+            args.requested_duration_minutes is not None
+            and args.duration_minutes != args.requested_duration_minutes
+        ):
+            raise CalError("Create the exact requested duration; clarify any changed length first.")
         schedules = await client.request("GET", "/v2/schedules")
         defaults = [s for s in schedules if s.get("isDefault")]
         if len(defaults) != 1:

@@ -59,6 +59,13 @@ def test_auth_csrf_dedupe_ownership_history_and_replay(tmp_path):
         assert len(history["messages"]) == 1
         with db.connection_context():
             from app.db.repository import emit, finish
+            from app.db.requests import resolve_requests
+
+            resolve_requests(
+                first["run_id"],
+                first["message_id"],
+                [{"relation": "dismiss", "reason": "Greeting only"}],
+            )
 
             emit(first["run_id"], "tool.status", {"text": "test"})
             finish(first["run_id"], "succeeded", "run.completed", {})

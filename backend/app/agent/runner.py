@@ -39,6 +39,16 @@ from app.db.repository import (
 from app.tools.executor import Executor, Interrupted, UnknownOutcome, Waiting
 from app.tools.schemas import definitions
 
+MUTATIONS = frozenset(
+    {
+        "create_booking",
+        "reschedule_booking",
+        "cancel_booking",
+        "create_event_type",
+        "save_preferred_name",
+    }
+)
+
 log = logging.getLogger("agent")
 
 
@@ -251,16 +261,16 @@ class Runner:
         return {
             "repeated_calls": (
                 "The assistant repeated the same lookups without progress. "
-                "Please narrow your request."
+                "This was an internal execution problem; no further changes were attempted."
             ),
             "model_step_limit": (
                 "The assistant reached its decision limit before finishing. "
-                "Please narrow your request."
+                "This was an internal execution problem; no further changes were attempted."
             ),
             "tool_limit": "The assistant reached its tool-call limit before finishing.",
             "context_budget": (
                 "The scheduling details could not fit in the context budget. "
-                "Please narrow your request."
+                "This was an internal execution problem; no further changes were attempted."
             ),
             "timeout": "The model provider timed out. Please try again.",
         }.get(getattr(exc, "code", ""), "Agent failed. Check provider configuration and try again.")
@@ -347,12 +357,26 @@ class Runner:
         total_calls = state.total_calls = int(bool(pending))
         seen_call_ids = {"confirmed-action"} if pending else set()
         previous_batch, repeats = None, 0
-        previous_results, unchanged_results = None, 0
+        signatures = []
+        recovery = False
         for step in range(self.settings.max_model_steps):
             state.step, state.stage = step, "context"
             if not await query(checkpoint, run_id):
                 raise Interrupted()
             base = await query(assemble, run_id, self.settings, tools)
+            if recovery:
+                base = [
+                    base[0],
+                    *base[1:-1],
+                    {
+                        "role": "system",
+                        "content": "Repeated tool cycles returned unchanged facts. Use retained "
+                        "results and original intent to give a truthful final status. "
+                        "No more tool calls or changes are permitted in this recovery attempt. "
+                        "Do not claim success without successful action evidence.",
+                    },
+                    base[-1],
+                ]
             audit = {
                 "step": step,
                 "schema_hash": hashlib.sha256(
@@ -372,7 +396,7 @@ class Runner:
             state.stage = "model"
             await record_async(run_id, "model.started", {"step": step}, self.settings)
             try:
-                async for event in self.provider.stream(messages, tools):
+                async for event in self.provider.stream(messages, [] if recovery else tools):
                     if not await query(checkpoint, run_id):
                         raise Interrupted()
                     if event.kind == "text_delta":
@@ -447,6 +471,8 @@ class Runner:
                 if call.name not in {t["function"]["name"] for t in tools}:
                     raise RunFailure("unknown_tool", "Unknown tool proposal")
                 require_content(call.arguments, secrets=secrets)
+            if recovery and calls:
+                raise RunFailure("repeated_calls", "Recovery proposed more tool calls")
             await query(self.append, run_id, text, new_response=True)
             state.stage = "decision"
             batch = tuple(sorted(tool_fingerprint(c.name, c.arguments) for c in calls))
@@ -459,8 +485,7 @@ class Runner:
                     {"step": step, "fingerprints": list(batch), "consecutive_repeats": repeats},
                     self.settings,
                 )
-                if repeats >= 3 and unchanged_results >= 2:
-                    raise RunFailure("repeated_calls", "Repeated calls without progress")
+
             if not calls:
                 await query(finish, run_id, "succeeded", "run.completed", {})
                 return
@@ -501,11 +526,49 @@ class Runner:
                 batch,
                 tool_fingerprint("results", [json.loads(m["content"]) for m in exchange[1:]]),
             )
-            unchanged_results = unchanged_results + 1 if signature == previous_results else 1
-            previous_results = signature
+            signatures.append(signature)
             exchanges.append(exchange)
+            # Compare complete cycles including result fingerprints: changing results
+            # are progress, even when arguments repeat. Call IDs are deliberately absent.
+            recovery = any(
+                len(signatures) >= period * 2
+                and signatures[-period:] == signatures[-2 * period : -period]
+                for period in range(1, 5)
+            )
+            if recovery:
+                await record_async(run_id, "loop.recovery", {"step": step}, self.settings)
+            if step == self.settings.max_model_steps - 1:
+                # No extra model invocation or write after the cap. A persisted,
+                # successful final action can still be reported deterministically.
+                completed = await query(
+                    lambda: list(
+                        Action.select().where(
+                            (Action.run == run_id) & (Action.state == "succeeded")
+                        )
+                    )
+                )
+                results = [json.loads(m["content"]) for m in exchange[1:]]
+                if all(c.name in MUTATIONS for c in calls) and all(
+                    any(a.kind == c.name and json.loads(a.result) == result for a in completed)
+                    for c, result in zip(calls, results, strict=True)
+                ):
+                    references = [
+                        str(result["response"].get("uid", result["response"].get("id", "")))
+                        for result in results
+                        if isinstance(result.get("response"), dict)
+                    ]
+                    report = "Scheduling action completed."
+                    if any(references):
+                        report += " Reference: " + ", ".join(filter(None, references)) + "."
+                    require_content(report, secrets=secrets)
+                    await query(self.append, run_id, report, new_response=True)
+                    await query(finish, run_id, "succeeded", "run.completed", {})
+                    return
         state.stage = "budget"
-        raise RunFailure("model_step_limit", "Model step budget exceeded")
+        raise RunFailure(
+            "repeated_calls" if recovery else "model_step_limit",
+            "Repeated calls without progress" if recovery else "Model step budget exceeded",
+        )
 
     async def tool(self, run_id, name, arguments, call_id, *, excluded=None, state=None):
         state = state or RunState()

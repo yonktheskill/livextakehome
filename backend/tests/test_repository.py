@@ -5,11 +5,11 @@ from concurrent.futures import ThreadPoolExecutor
 from uuid import uuid4
 
 from conftest import start_test_run
+from request_support import accept_interpreted as accept
 
 from app.db.database import initialize
 from app.db.models import Action, Confirmation, Conversation, Event, Message, Run, Trace, User, db
 from app.db.repository import (
-    accept,
     claim,
     claim_run,
     cleanup,

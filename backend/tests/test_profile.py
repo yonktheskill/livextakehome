@@ -120,3 +120,68 @@ async def test_runner_refreshes_profile_after_save(account):
     await Runner(Settings(llm_provider="fake"), vault, ProfileProvider()).execute(run_id)
     assert User.get_by_id(user.id).preferred_name == "Alex"
     assert Run.get_by_id(run_id).status == "succeeded"
+
+
+@pytest.mark.asyncio
+async def test_earlier_owned_name_evidence_and_remember_followup(account):
+    from app.db.models import Message
+
+    user, vault = account
+    source_run = submit(user, "My name is Dick, book a meeting tomorrow")
+    source = Run.get_by_id(source_run).message
+    run_id = submit(user, "Remember that")
+    result = await Executor(vault).execute(
+        run_id,
+        "save_preferred_name",
+        {"preferred_name": "Dick", "source_message_id": source.id},
+    )
+    assert result == {"saved": True, "preferred_name": "Dick"}
+    assert Message.get_by_id(source.id).content == "My name is Dick, book a meeting tomorrow"
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "source_kind", ["other_owner", "assistant", "tool", "future", "attendee", "negated"]
+)
+async def test_name_source_requires_owned_prior_original_self_identification(account, source_kind):
+    import time
+
+    from app.db.models import Message
+
+    user, vault = account
+    run_id = submit(user, "Remember that")
+    run = Run.get_by_id(run_id)
+    conversation = run.conversation
+    role, content, created = "user", "Call me Dick", run.message.created_at - 1
+    if source_kind == "other_owner":
+        other = User.create(email="stranger@example.com", password_hash="unused")
+        conversation = Conversation.create(user=other)
+    elif source_kind in {"assistant", "tool"}:
+        role = source_kind
+    elif source_kind == "future":
+        created = time.time() + 100
+    elif source_kind == "attendee":
+        content = "Book a meeting for Dick"
+    elif source_kind == "negated":
+        content = "Don't call me Dick"
+    source = Message.create(
+        conversation=conversation, role=role, content=content, created_at=created
+    )
+    result = await Executor(vault).execute(
+        run_id, "save_preferred_name", {"preferred_name": "Dick", "source_message_id": source.id}
+    )
+    assert "error" in result
+    assert User.get_by_id(user.id).preferred_name is None
+
+
+@pytest.mark.asyncio
+async def test_old_name_source_cannot_replace_later_identification(account):
+    user, vault = account
+    first = submit(user, "Call me Dick")
+    source = Run.get_by_id(first).message
+    submit(user, "Call me Alex")
+    run_id = submit(user, "Remember my name")
+    result = await Executor(vault).execute(
+        run_id, "save_preferred_name", {"preferred_name": "Dick", "source_message_id": source.id}
+    )
+    assert "error" in result

@@ -5,10 +5,11 @@ from uuid import uuid4
 
 import pytest
 from conftest import start_test_run
+from request_support import accept_interpreted as accept
 
 from app.db.dispatch import StalePreparation, prepare_action, settle
 from app.db.models import Action, Confirmation, Connection, Event, Message, Run, db
-from app.db.repository import accept, claim
+from app.db.repository import claim
 
 
 def proposal(user, content="cancel"):

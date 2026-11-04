@@ -15,10 +15,8 @@ from pydantic import (
     model_validator,
 )
 
-from app.tools.durations import CREATABLE_DURATIONS
-
 DURATION_DESCRIPTION = (
-    "Original duration requested by the user; do not replace with a rounded value."
+    "Exact duration currently agreed with the user; do not change without authorization."
 )
 
 
@@ -26,7 +24,13 @@ class Arguments(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
 
-class SavePreferredName(Arguments):
+class WriteArguments(Arguments):
+    request_id: str | None = Field(default=None, min_length=1, max_length=200)
+    request_revision: int | None = Field(default=None, ge=1)
+
+
+class SavePreferredName(WriteArguments):
+    source_message_id: str | None = Field(default=None, min_length=1, max_length=200)
     preferred_name: str = Field(min_length=1, max_length=200)
 
     @field_validator("preferred_name")
@@ -113,7 +117,7 @@ BookingAnswer = (
 )
 
 
-class CreateBooking(EventType):
+class CreateBooking(EventType, WriteArguments):
     start: datetime
     attendee: Attendee
     duration_minutes: int | None = Field(
@@ -137,7 +141,7 @@ class CreateBooking(EventType):
         return Range.aware(value) if value is not None else None
 
 
-class Reschedule(Booking):
+class Reschedule(Booking, WriteArguments):
     new_start: datetime
 
     @field_validator("new_start")
@@ -146,11 +150,11 @@ class Reschedule(Booking):
         return Range.aware(value)
 
 
-class Cancel(Booking):
+class Cancel(Booking, WriteArguments):
     reason: str = Field(default="", max_length=500)
 
 
-class CreateType(Arguments):
+class CreateType(WriteArguments):
     title: str = Field(min_length=1, max_length=120)
     duration_minutes: int = Field(gt=0, le=1440)
     requested_duration_minutes: int | None = Field(
@@ -180,44 +184,59 @@ DESCRIPTIONS = {
     "Reads at most max_pages (1–5) global pages. If truncated, pass next_cursor as cursor "
     "with identical dates/status to continue. Empty truncated pages do not mean no bookings. "
     "Do not claim completeness until truncated is false.",
-    "save_preferred_name": "Save the authenticated user's explicitly supplied form of address. "
-    "Require explicit self-identification (my name is / call me); clarify ambiguity or negation. "
-    "Never infer it from email or attendees. "
-    "Works without a Cal.com connection; can update an existing preferred name.",
-    "cancel_booking": "Prepare exact single-booking cancellation; always asks user confirmation.",
-    "create_event_type": "Propose reusable personal type using the live default schedule "
-    "and supported connected "
-    "default conferencing app; clarify if missing or ambiguous. "
-    "Implicit creation requires confirmation. Clear explicit creation can be authorized. "
-    f"Application creation choices (minutes): {list(CREATABLE_DURATIONS)}. "
-    "Use plan_booking_duration before creating a missing booking type; preserve the original "
-    "booking length in requested_duration_minutes and use the effective length "
-    "in duration_minutes. "
-    "Creation alone does not book an appointment. Failures of schedule, permission or connection "
-    "are not evidence that a different duration can be created; report the blocker.",
-    "plan_booking_duration": "Resolve duration before availability or booking: reuse an exact "
-    "suitable type, else create the exact duration if allowed, else round up to the smallest "
-    "reusable or creatable duration. A rounded type may need creation too. "
-    "Examples: missing 30 creates 30 rather than using 40; missing 110 creates 120 even if "
-    "only 150 exists. Pass the original user duration and maximum_minutes, capped by any explicit "
-    "end interval. Respect selected types; clarify before switching. "
-    "Creation remains subject to schedule/API validation.",
-    "create_booking": "Book after live validation. Provide attendee and required fields. "
-    "Follow plan_booking_duration; create missing types first. Keep duration_minutes equal to "
-    "the original request, including when the selected type uses a rounded duration.",
+    "save_preferred_name": "Save only the authenticated user's explicitly supplied name. "
+    "Earlier self-identification may be referenced with source_message_id, an original user "
+    "message from this conversation at or before the current message. Never infer from email "
+    "or attendees. Works without a Cal.com connection.",
+    "cancel_booking": "Cancel an exact owned whole booking when clearly user-authorized. "
+    "Ambiguous target or scope requires focused clarification; no repeated permission after "
+    "clear authorization. All attendees and seats are included.",
+    "create_event_type": "Create a reusable personal type using the live default schedule "
+    "and connected default conferencing app. Implicit creation requires confirmation; clear "
+    "explicit creation can be authorized, including compound requests. Accept positive minute "
+    "lengths; no fixed UI whitelist. Preserve the original requested_duration_minutes when "
+    "creating a missing booking type. Creation alone does not book an appointment. API errors "
+    "do not authorize different lengths or persistent configuration.",
+    "plan_booking_duration": "Optional helper to find exact live reuse or propose exact-length "
+    "creation. Pass suitable IDs and the original duration and maximum. A missing reusable "
+    "type still needs creation permission. Never silently round up.",
+    "create_booking": "Book after live ownership, configuration, fields and availability "
+    "validation. Provide the exact user-authorized duration and attendee details. Lookup "
+    "sequence and use of the duration helper are optional. request_id associates a write "
+    "with its durable user request when available; it is never sent to Cal.com.",
     "reschedule_booking": "Move exact booking preserving duration; validate live slots first.",
 }
 
 
 def definitions():
-    return [
-        {
-            "type": "function",
-            "function": {
-                "name": name,
-                "description": DESCRIPTIONS.get(name, name.replace("_", " ")),
-                "parameters": schema.model_json_schema(),
-            },
+    from app.db.requests import request_tool_definitions
+    from app.tools.authorization import authorization_tool_definitions
+
+    return (
+        [
+            {
+                "type": "function",
+                "function": {
+                    "name": name,
+                    "description": DESCRIPTIONS.get(name, name.replace("_", " ")),
+                    "parameters": compact_schema(schema.model_json_schema()),
+                },
+            }
+            for name, schema in SCHEMAS.items()
+        ]
+        + request_tool_definitions()
+        + authorization_tool_definitions()
+    )
+
+
+def compact_schema(value):
+    """Discard generated display titles; retain all actual validation constraints."""
+    if isinstance(value, dict):
+        return {
+            k: compact_schema(v)
+            for k, v in value.items()
+            if not (k == "title" and isinstance(v, str))
         }
-        for name, schema in SCHEMAS.items()
-    ]
+    if isinstance(value, list):
+        return [compact_schema(v) for v in value]
+    return value

@@ -14,7 +14,17 @@ class StalePreparation(Exception):
     pass
 
 
-def prepare_action(run, conn, name, encoded, fingerprint, confirmation_required, request=None):
+def prepare_action(
+    run,
+    conn,
+    name,
+    encoded,
+    fingerprint,
+    confirmation_required,
+    request=None,
+    request_id=None,
+    request_revision=None,
+):
     with db.atomic("IMMEDIATE"):
         live = Run.get_by_id(run.id)
         connection = Connection.get_or_none(Connection.user == live.conversation.user_id)
@@ -25,11 +35,32 @@ def prepare_action(run, conn, name, encoded, fingerprint, confirmation_required,
             or not connection.ciphertext
         ):
             raise StalePreparation()
+        from app.db.models import BookingRequest
+        from app.db.requests import RequestConflict, assert_requests_ready
+
+        managed = (
+            BookingRequest.select()
+            .where(BookingRequest.conversation == live.conversation_id)
+            .exists()
+        )
+        assert_requests_ready(live.id)
+        if managed:
+            if name in {"create_booking", "reschedule_booking"} and not request_id:
+                raise RequestConflict(
+                    "Booking writes require durable request_id and request_revision"
+                )
+        task = None
+        if request_id is not None:
+            from app.db.requests import associate_action
+
+            task = associate_action(live, name, encoded, request_id, request_revision)
         existing = Action.get_or_none(
             (Action.run == live.id)
             & (Action.kind == name)
             & (Action.inputs == encoded)
             & (Action.state != "superseded")
+            & (Action.task == (task.id if task else None))
+            & (Action.task_revision == (task.revision if task else None))
         )
         if existing:
             if existing.state in {"dispatching", "unknown", "succeeded", "failed"}:
@@ -42,17 +73,31 @@ def prepare_action(run, conn, name, encoded, fingerprint, confirmation_required,
             existing.state = "superseded"
             existing.logical_key = None
             existing.save()
+        if task:
+            # A revalidated preparation replaces this task's older uncommitted
+            # plan only. Other tasks' proposals and confirmation evidence survive.
+            Action.update(state="superseded", logical_key=None).where(
+                (Action.task == task.id)
+                & Action.state.in_(["prepared", "authorized", "awaiting_confirmation"])
+            ).execute()
         action = Action.create(
             run=live.id,
             revision=live.revision,
             generation=connection.generation,
+            task=task,
+            task_revision=task.revision if task else None,
             kind=name,
             inputs=encoded,
-            logical_key=digest(f"{live.id}:{name}:{encoded}"),
+            logical_key=digest(
+                f"{live.id}:{name}:{encoded}" + (f":{task.id}:{task.revision}" if task else "")
+            ),
             request=json.dumps(request or {}, sort_keys=True),
             fingerprint=fingerprint,
             state="prepared",
         )
+        if task:
+            task.last_action_id = action.id
+            task.save()
         if confirmation_required:
             import time
 
@@ -99,6 +144,9 @@ def settle(action_id, state, result):
         action.state = state
         action.result = json.dumps(result)
         action.save()
+        from app.db.requests import settle_task
+
+        settle_task(action)
         if state == "succeeded":
             response = result.get("response", {})
             fields = {

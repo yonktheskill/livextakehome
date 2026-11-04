@@ -28,12 +28,12 @@ def event_type(minutes, type_id=10):
         ([event_type(30)], 30, "reuse", 30, [10]),
         ([event_type(40)], 30, "create_event_type", 30, []),
         ([], 30, "create_event_type", 30, []),
-        ([], 110, "create_event_type", 120, []),
-        ([event_type(150)], 110, "create_event_type", 120, []),
-        ([event_type(120)], 110, "reuse", 120, [10]),
+        ([], 110, "create_event_type", 110, []),
+        ([event_type(150)], 110, "create_event_type", 110, []),
+        ([event_type(120)], 110, "create_event_type", 110, []),
         ([event_type(110)], 110, "reuse", 110, [10]),
-        ([event_type(115)], 110, "reuse", 115, [10]),
-        ([event_type(500)], 490, "reuse", 500, [10]),
+        ([event_type(115)], 110, "create_event_type", 110, []),
+        ([event_type(500)], 490, "create_event_type", 490, []),
         ([event_type(40), event_type(30, 11)], 30, "reuse", 30, [11]),
         ([{**event_type(40), "lengthInMinutesOptions": [30, 40]}], 30, "reuse", 30, [10]),
         ([{**event_type(40), "title": "30 min meeting"}], 30, "create_event_type", 30, []),
@@ -51,9 +51,9 @@ def test_duration_precedence(types, requested, action, effective, ids):
     }
 
 
-@pytest.mark.parametrize(("requested", "maximum"), [(110, 110), (481, None), (30, 25)])
-def test_no_rounding_past_maximum_or_largest_choice(requested, maximum):
-    with pytest.raises(CalError, match="No reusable or creatable duration"):
+@pytest.mark.parametrize(("requested", "maximum"), [(110, 109), (1441, None), (30, 25)])
+def test_invalid_duration_or_exceeded_maximum(requested, maximum):
+    with pytest.raises(CalError):
         duration_plan([], requested, maximum)
 
 
@@ -102,7 +102,7 @@ BOOKING_ARGS = {
 
 
 @pytest.mark.asyncio
-@pytest.mark.parametrize(("requested", "existing", "effective"), [(30, 40, 30), (110, 150, 120)])
+@pytest.mark.parametrize(("requested", "existing", "effective"), [(30, 40, 30), (110, 150, 110)])
 async def test_create_missing_type_confirm_then_book_original_request(
     account, requested, existing, effective
 ):
@@ -192,8 +192,8 @@ async def test_slot_and_booking_tools_cannot_skip_missing_shorter_type(
 
 
 @pytest.mark.asyncio
-@pytest.mark.parametrize(("requested", "proposed"), [(None, 110), (30, 40), (110, 150), (110, 90)])
-async def test_creation_cannot_skip_exact_or_smallest_rounded_choice(account, requested, proposed):
+@pytest.mark.parametrize(("requested", "proposed"), [(30, 40), (110, 150), (110, 90)])
+async def test_creation_cannot_change_requested_length(account, requested, proposed):
     user, vault = account
     calendar = Calendar(40)
     run = accept(user, "book a meeting", str(uuid4()))["run_id"]

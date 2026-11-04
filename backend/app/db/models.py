@@ -95,6 +95,29 @@ class Event(Base):
         indexes = ((("run", "sequence"), True),)
 
 
+class BookingRequest(Base):
+    """Durable semantic task; never implicitly deleted by a newer message/run."""
+
+    id = CharField(primary_key=True, default=uid)
+    conversation = ForeignKeyField(Conversation, on_delete="CASCADE")
+    origin_message = ForeignKeyField(Message)
+    revision = IntegerField(default=1)
+    facts = TextField(default="{}")
+    state = CharField(default="pending", index=True)
+    booking_uid = CharField(null=True)
+    last_action_id = CharField(null=True)
+    created_at = FloatField(default=time.time)
+
+
+class RequestInbox(Base):
+    message = ForeignKeyField(Message, unique=True, on_delete="CASCADE")
+    conversation = ForeignKeyField(Conversation, on_delete="CASCADE")
+    state = CharField(default="pending", index=True)
+    resolution = TextField(default="{}")
+    resolved_run_id = CharField(null=True)
+    created_at = FloatField(default=time.time)
+
+
 class Action(Base):
     id = CharField(primary_key=True, default=uid)
     run = ForeignKeyField(Run)
@@ -102,6 +125,8 @@ class Action(Base):
     generation = IntegerField()
     kind = CharField()
     inputs = TextField()
+    task = ForeignKeyField(BookingRequest, null=True)
+    task_revision = IntegerField(null=True)
     logical_key = CharField(null=True, unique=True)
     request = TextField(default="{}", null=True)
     fingerprint = CharField()
@@ -147,6 +172,8 @@ TABLES = [
     Message,
     Run,
     Event,
+    BookingRequest,
+    RequestInbox,
     Action,
     Confirmation,
     Snapshot,
