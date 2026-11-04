@@ -33,6 +33,11 @@ def emit(run, kind, payload):
 def finish(run_id, status, kind, payload):
     with db.atomic("IMMEDIATE"):
         Run.update(status=status).where(Run.id == run_id).execute()
+        if status != "waiting_for_user":
+            Action.update(state="superseded").where(
+                (Action.run == run_id)
+                & Action.state.in_(["prepared", "authorized", "awaiting_confirmation"])
+            ).execute()
         emit(run_id, kind, payload)
         Message.update(status="final" if status == "succeeded" else status).where(
             Message.client_request_id == f"assistant:{run_id}"
@@ -69,10 +74,13 @@ def accept(user, content, request_id):
                 & (Confirmation.expires > time.time())
                 & (Action.state == "awaiting_confirmation")
                 & (Action.revision == previous_revision)
+                & (Run.status == "waiting_for_user")
                 & (Run.revision == previous_revision)
                 & (Run.interrupted == False)  # noqa: E712
             )
         )
+        # Require persisted canonical exposure evidence, including legacy proposals.
+        pending = [c for c in pending if exposed(c.action)]
         yes = content.strip().lower() in {"yes", "confirm", "yes, confirm", "confirm cancellation"}
         selected = pending[0] if yes and len(pending) == 1 else None
         if selected and content.strip().lower() == "confirm cancellation":
@@ -98,7 +106,11 @@ def accept(user, content, request_id):
 
 def checkpoint(run_id):
     run = Run.get_by_id(run_id)
-    return not run.interrupted and run.conversation.revision == run.revision
+    return (
+        run.status == "running"
+        and not run.interrupted
+        and run.conversation.revision == run.revision
+    )
 
 
 def stop(run_id):
@@ -185,9 +197,74 @@ def claim_run():
         return run.id
 
 
+def exposed(action):
+    frozen = json.loads(action.request or "{}")
+    prompt = frozen.get("confirmation_prompt")
+    message = Message.get_or_none(Message.id == frozen.get("confirmation_prompt_message_id", ""))
+    return bool(
+        prompt
+        and message
+        and message.status == "waiting_for_user"
+        and message.conversation_id == action.run.conversation_id
+        and message.content == frozen.get("confirmation_message_content")
+        and message.content.endswith(prompt)
+    )
+
+
+def wait_for_user(run_id, text):
+    """Persist exact prompt and activate its proposal under one writer gate."""
+    from app.tools.messages import confirmation_message
+
+    with db.atomic("IMMEDIATE"):
+        if not checkpoint(run_id):
+            finish(run_id, "interrupted", "run.interrupted", {})
+            return
+        run = Run.get_by_id(run_id)
+        proposals = list(
+            Action.select()
+            .join(Confirmation)
+            .where((Action.run == run_id) & (Action.state == "prepared"))
+        )
+        if len(proposals) > 1:
+            raise ValueError("Ambiguous confirmation proposal")
+        if proposals:
+            action = proposals[0]
+            frozen = json.loads(action.request)
+            canonical = confirmation_message(
+                action.kind, frozen.get("validation", {}), run.conversation.user.time_zone
+            )
+            if text != canonical:
+                raise ValueError("Confirmation prompt does not match frozen action")
+        message, _ = Message.get_or_create(
+            conversation=run.conversation_id,
+            client_request_id=f"assistant:{run_id}",
+            defaults={"role": "assistant"},
+        )
+        delta = ("\n\n" if message.content else "") + text
+        message.content += delta
+        message.status = "waiting_for_user"
+        message.save()
+        if proposals:
+            frozen["confirmation_prompt"] = text
+            frozen["confirmation_prompt_message_id"] = message.id
+            frozen["confirmation_message_content"] = message.content
+            action.request = json.dumps(frozen)
+            action.state = "awaiting_confirmation"
+            action.save()
+        emit(run_id, "message.delta", {"message_id": message.id, "text": delta})
+        finish(run_id, "waiting_for_user", "run.waiting", {"message": text})
+
+
 def recover():
     with db.atomic("IMMEDIATE"):
         Action.update(state="unknown").where(Action.state == "dispatching").execute()
+        # Preserve only proposals whose exact prompt and waiting commit survived.
+        for action in Action.select().where(Action.state == "awaiting_confirmation"):
+            if action.run.status != "waiting_for_user" or not exposed(action):
+                Action.update(state="superseded").where(Action.id == action.id).execute()
+        Action.update(state="superseded").where(
+            Action.state.in_(["prepared", "authorized"])
+        ).execute()
         for run in Run.select().where(Run.status == "running"):
             unknown = (
                 Action.select().where((Action.run == run) & (Action.state == "unknown")).exists()

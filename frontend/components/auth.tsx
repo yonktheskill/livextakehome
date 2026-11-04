@@ -6,6 +6,7 @@ const AuthContext = createContext<{
   loading: boolean;
   error: string;
   refresh: () => Promise<void>;
+  refreshProfile: () => Promise<void>;
   authenticate: (mode: "login" | "register", email: string, password: string) => Promise<void>;
   logout: () => Promise<void>;
   updateTimeZone: (timeZone: string) => Promise<void>;
@@ -44,11 +45,26 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
       active = false;
     };
   }, []);
+  async function refreshProfile() {
+    try {
+      const updated = await api<User>("/auth/me");
+      setUser((current) => (current?.id === updated.id ? updated : current));
+    } catch (e) {
+      if (e instanceof ApiError && e.status === 401) setUser(null);
+      else throw e;
+    }
+  }
   async function authenticate(mode: "login" | "register", email: string, password: string) {
     setUser(await api<User>(`/auth/${mode}`, { method: "POST", body: JSON.stringify({ email, password }) }));
   }
   async function logout() {
     await api("/auth/logout", { method: "POST" });
+    if (user) {
+      try {
+        sessionStorage.removeItem(`daylight-pending:${user.id}`);
+        sessionStorage.removeItem(`daylight-run:${user.id}`);
+      } catch {}
+    }
     setUser(null);
   }
   async function updateTimeZone(timeZone: string) {
@@ -59,7 +75,9 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     setUser((current) => (current?.id === updated.id ? updated : current));
   }
   return (
-    <AuthContext.Provider value={{ user, loading, error, refresh, authenticate, logout, updateTimeZone }}>
+    <AuthContext.Provider
+      value={{ user, loading, error, refresh, refreshProfile, authenticate, logout, updateTimeZone }}
+    >
       {children}
     </AuthContext.Provider>
   );

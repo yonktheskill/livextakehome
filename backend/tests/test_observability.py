@@ -3,6 +3,7 @@ import time
 from uuid import uuid4
 
 import pytest
+from conftest import start_test_run
 from cryptography.fernet import Fernet
 from fastapi.testclient import TestClient
 
@@ -48,6 +49,7 @@ def test_recursive_redaction_and_key_shaped_values():
 async def test_durable_tool_inputs_outputs_and_errors_no_vault_read(account):
     user, _ = account
     run_id = accept(user, "private original prompt", str(uuid4()))["run_id"]
+    start_test_run(run_id)
     settings = Settings(llm_provider="fake", openrouter_api_key="project-private")
     runner = Runner(settings, None, FakeProvider())
 
@@ -70,7 +72,9 @@ async def test_durable_tool_inputs_outputs_and_errors_no_vault_read(account):
     )
     with pytest.raises(Waiting):
         await runner.tool(run_id, "wait", {}, "call_wait")
-    traces = [json.loads(t.payload) for t in Trace.select().order_by(Trace.id)]
+    traces = [
+        json.loads(t.payload) for t in Trace.select().where(Trace.kind == "tool").order_by(Trace.id)
+    ]
     assert traces[0]["inputs"]["booking_uid"] == "booking_ABC"
     assert traces[0]["outputs"]["booking_uid"] == "booking_ABC"
     assert traces[0]["call_id"] == "call_ABC" and traces[0]["run_id"] == run_id
@@ -93,6 +97,7 @@ async def test_durable_tool_inputs_outputs_and_errors_no_vault_read(account):
 def test_trace_byte_bound_and_existing_retention(account):
     user, _ = account
     run_id = accept(user, "hi", str(uuid4()))["run_id"]
+    start_test_run(run_id)
     settings = Settings(trace_max_bytes=1024)
     record_tool(
         run_id,
@@ -145,6 +150,7 @@ def test_debug_endpoint_owner_scoped_and_opt_in(tmp_path):
 async def test_schema_failure_is_traced_without_network(account):
     user, vault = account
     run_id = accept(user, "hello", str(uuid4()))["run_id"]
+    start_test_run(run_id)
     runner = Runner(
         Settings(llm_provider="fake"),
         vault,

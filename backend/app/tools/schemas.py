@@ -2,7 +2,18 @@ from datetime import datetime
 from typing import Annotated, Literal
 from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
-from pydantic import BaseModel, ConfigDict, EmailStr, Field, field_validator, model_validator
+from pydantic import (
+    BaseModel,
+    ConfigDict,
+    EmailStr,
+    Field,
+    StrictBool,
+    StrictFloat,
+    StrictInt,
+    StrictStr,
+    field_validator,
+    model_validator,
+)
 
 from app.tools.durations import CREATABLE_DURATIONS
 
@@ -46,6 +57,8 @@ class Range(Arguments):
 
 
 class ListBookings(Range):
+    cursor: str | None = Field(default=None, min_length=1, max_length=2000)
+    max_pages: int = Field(default=5, ge=1, le=5)
     status: Literal["upcoming", "past", "cancelled", "unconfirmed"] | None = None
 
 
@@ -90,6 +103,16 @@ class Attendee(Arguments):
         return value
 
 
+AnswerText = Annotated[StrictStr, Field(max_length=4000)]
+BookingAnswer = (
+    AnswerText
+    | StrictBool
+    | Annotated[StrictInt, Field(ge=-1e15, le=1e15)]
+    | Annotated[StrictFloat, Field(allow_inf_nan=False, ge=-1e15, le=1e15)]
+    | Annotated[list[AnswerText], Field(max_length=50)]
+)
+
+
 class CreateBooking(EventType):
     start: datetime
     attendee: Attendee
@@ -98,7 +121,9 @@ class CreateBooking(EventType):
     )
     explicit_end: datetime | None = None
     maximum_minutes: int | None = Field(default=None, gt=0)
-    booking_fields: dict[str, str] = Field(default_factory=dict)
+    booking_fields: dict[Annotated[str, Field(min_length=1, max_length=200)], BookingAnswer] = (
+        Field(default_factory=dict, max_length=50)
+    )
     location: str | None = Field(default=None, max_length=1000)
 
     @field_validator("start")
@@ -151,11 +176,18 @@ SCHEMAS: dict[str, type[Arguments]] = {
     "create_event_type": CreateType,
 }
 DESCRIPTIONS = {
+    "list_bookings": "List owned bookings overlapping start/end, including crossing appointments. "
+    "Reads at most max_pages (1–5) global pages. If truncated, pass next_cursor as cursor "
+    "with identical dates/status to continue. Empty truncated pages do not mean no bookings. "
+    "Do not claim completeness until truncated is false.",
     "save_preferred_name": "Save the authenticated user's explicitly supplied form of address. "
-    "The name must appear in the current user message. Never infer it from email or attendees. "
+    "Require explicit self-identification (my name is / call me); clarify ambiguity or negation. "
+    "Never infer it from email or attendees. "
     "Works without a Cal.com connection; can update an existing preferred name.",
     "cancel_booking": "Prepare exact single-booking cancellation; always asks user confirmation.",
-    "create_event_type": "Propose reusable personal type using default schedule and Cal Video. "
+    "create_event_type": "Propose reusable personal type using the live default schedule "
+    "and supported connected "
+    "default conferencing app; clarify if missing or ambiguous. "
     "Implicit creation requires confirmation. Clear explicit creation can be authorized. "
     f"Application creation choices (minutes): {list(CREATABLE_DURATIONS)}. "
     "Use plan_booking_duration before creating a missing booking type; preserve the original "

@@ -2,6 +2,7 @@ import json
 from uuid import uuid4
 
 import pytest
+from conftest import start_test_run
 from cryptography.fernet import Fernet
 from fastapi.testclient import TestClient
 
@@ -159,6 +160,7 @@ def test_rejected_submission_does_not_persist_interrupt_or_consume_request_id(tm
 async def test_unchecked_chunks_and_tool_calls_never_escape_before_validation(account, parts):
     user, vault = account
     run_id = accept(user, "Book a meeting", str(uuid4()))["run_id"]
+    start_test_run(run_id)
 
     class InspectingProvider:
         async def stream(self, messages, tools):
@@ -185,13 +187,14 @@ async def test_unchecked_chunks_and_tool_calls_never_escape_before_validation(ac
     assert Action.select().count() == 0
     assert "".join(parts) not in "".join(e.payload for e in Event.select())
     trace = Trace.get(Trace.kind == "guardrail")
-    assert set(json.loads(trace.payload)) == {"reason", "policy_version"}
+    assert set(json.loads(trace.payload)) == {"reason", "policy_version", "run_id"}
 
 
 @pytest.mark.asyncio
 async def test_all_proposals_are_checked_before_first_action(account):
     user, vault = account
     run_id = accept(user, "Book a meeting", str(uuid4()))["run_id"]
+    start_test_run(run_id)
     provider = FakeProvider(
         steps=[
             [
@@ -231,6 +234,7 @@ async def test_all_proposals_are_checked_before_first_action(account):
 async def test_prohibited_outgoing_fields_never_prepare_or_dispatch(account, name, args):
     user, vault = account
     run_id = accept(user, "Help with my booking", str(uuid4()))["run_id"]
+    start_test_run(run_id)
     posts = []
     with pytest.raises(ContentRejected):
         await fixture_executor(vault, posts).execute(run_id, name, args)
@@ -246,6 +250,7 @@ def test_legacy_profile_history_and_context_are_filtered_without_rewriting_evide
     conv = Conversation.get(Conversation.user == user)
     legacy = Message.create(conversation=conv, role="user", content=injected)
     run_id = accept(user, "What is available?", str(uuid4()))["run_id"]
+    start_test_run(run_id)
     context = assemble(run_id)
     assert injected not in json.dumps(context)
     assert user.email not in context[0]["content"]
@@ -259,6 +264,7 @@ def test_legacy_profile_history_and_context_are_filtered_without_rewriting_evide
 async def test_external_tool_text_is_filtered_before_next_inference(account):
     user, vault = account
     run_id = accept(user, "Find available event types", str(uuid4()))["run_id"]
+    start_test_run(run_id)
 
     class Provider:
         async def stream(self, messages, tools):
@@ -285,6 +291,7 @@ async def test_external_tool_text_is_filtered_before_next_inference(account):
 async def test_blocked_followup_reply_preserves_already_completed_action(account):
     user, vault = account
     run_id = accept(user, "Book a meeting", str(uuid4()))["run_id"]
+    start_test_run(run_id)
     provider = FakeProvider(
         steps=[
             [ProviderEvent("tool_call", call_id="book", name="create_booking", arguments=ARGS)],
@@ -321,6 +328,7 @@ def test_history_receipts_and_split_legacy_replay_hide_content_preserving_action
         with db.connection_context():
             user = User.get_by_id(owner["id"])
             run_id = accept(user, "Book a meeting", str(uuid4()))["run_id"]
+            start_test_run(run_id)
             run = Run.get_by_id(run_id)
             msg = Message.create(conversation=run.conversation_id, role="assistant", content="fuck")
             for seq, part in enumerate(["fu", "ck"], 1):

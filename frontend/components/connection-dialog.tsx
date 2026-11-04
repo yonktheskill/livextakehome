@@ -94,7 +94,7 @@ export function ConnectionDialog({
                 autoComplete="off"
                 spellCheck={false}
                 required
-                maxLength={4096}
+                maxLength={1024}
                 placeholder="Paste your API key"
               />
               <p className="field-hint">

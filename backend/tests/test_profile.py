@@ -2,6 +2,7 @@ import json
 from uuid import uuid4
 
 import pytest
+from conftest import start_test_run
 
 from app.agent.context import assemble
 from app.agent.runner import Runner
@@ -15,7 +16,9 @@ from app.tools.executor import Executor, Interrupted
 
 
 def submit(user, text):
-    return accept(user, text, str(uuid4()))["run_id"]
+    result = accept(user, text, str(uuid4()))["run_id"]
+    start_test_run(result)
+    return result
 
 
 def profile(run_id):

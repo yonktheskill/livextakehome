@@ -6,6 +6,8 @@ services:
       - .env.local
     environment:
       MASTER_SECRET: ${MASTER_SECRET:?Run make init-dev and configure .env.local}
+      # JSON array parsed and validated by Settings/Fernet at backend startup.
+      MASTER_SECRET_PREVIOUS: ${MASTER_SECRET_PREVIOUS:-[]}
       DATABASE_PATH: /app/data/app.sqlite3
       # Preserve `make up LLM_PROVIDER=fake` without duplicating settings defaults.
       LLM_PROVIDER: ${LLM_PROVIDER:-codex}

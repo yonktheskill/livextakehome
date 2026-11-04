@@ -1,10 +1,20 @@
 import asyncio
+import hashlib
 import json
 import logging
 import time
+from dataclasses import dataclass, field
 
-from app.agent.context import assemble, authorized, covered_sources, estimate, fit_prompt, retrieve
-from app.agent.tracing import record_tool
+from app.agent.context import (
+    ContextBudgetExceeded,
+    assemble,
+    authorized,
+    covered_sources,
+    estimate,
+    fit_prompt,
+    retrieve,
+)
+from app.agent.tracing import error_metadata, record_async, record_tool_async, tool_fingerprint
 from app.core.guardrails import (
     POLICY_VERSION,
     SAFE_OUTPUT,
@@ -14,7 +24,7 @@ from app.core.guardrails import (
     safe_text,
 )
 from app.db.database import query
-from app.db.models import Message, Run, Trace, db
+from app.db.models import Action, Message, Run, db
 from app.db.repository import (
     TERMINAL,
     checkpoint,
@@ -24,11 +34,26 @@ from app.db.repository import (
     finish,
     mark_uncertain,
     recover,
+    wait_for_user,
 )
 from app.tools.executor import Executor, Interrupted, UnknownOutcome, Waiting
 from app.tools.schemas import definitions
 
 log = logging.getLogger("agent")
+
+
+class RunFailure(RuntimeError):
+    def __init__(self, code, message):
+        self.code = code
+        super().__init__(message)
+
+
+@dataclass
+class RunState:
+    stage: str = "run"
+    step: int | None = None
+    total_calls: int = 0
+    started: float = field(default_factory=time.monotonic)
 
 
 class Runner:
@@ -43,9 +68,7 @@ class Runner:
         try:
             await query(recover)
         except Exception as exc:
-            log.error(
-                json.dumps({"event": "runner_recovery_failed", "error_class": type(exc).__name__})
-            )
+            log.error(json.dumps({"event": "runner_recovery_failed", **error_metadata(exc)}))
             raise
         workers = [
             asyncio.create_task(self.consume(), name=f"agent-worker-{index}")
@@ -58,9 +81,7 @@ class Runner:
                     await self.pause(3600)
                 except Exception as exc:
                     log.error(
-                        json.dumps(
-                            {"event": "runner_supervisor_failed", "error_class": type(exc).__name__}
-                        )
+                        json.dumps({"event": "runner_supervisor_failed", **error_metadata(exc)})
                     )
                     await self.pause()
         finally:
@@ -96,54 +117,82 @@ class Runner:
             except asyncio.CancelledError:
                 raise
             except Exception as exc:
-                log.error(
-                    json.dumps({"event": "runner_worker_failed", "error_class": type(exc).__name__})
-                )
+                log.error(json.dumps({"event": "runner_worker_failed", **error_metadata(exc)}))
                 await self.pause()
 
     async def execute(self, run_id):
+        state = RunState()
         try:
-            await self._execute(run_id)
-        except asyncio.CancelledError:
+            await self._execute(run_id, state)
+        except asyncio.CancelledError as exc:
             # Cover cancellation during exception handlers and final bookkeeping too.
-            await self.stopped(run_id)
+            await self.stopped(run_id, state, exc, "cancelled")
             raise
 
-    async def _execute(self, run_id):
+    async def _execute(self, run_id, state):
         try:
+            await record_async(
+                run_id,
+                "run.started",
+                {
+                    "provider": self.settings.llm_provider,
+                    "model": self.settings.llm_model,
+                    "limits": {
+                        "run_seconds": self.settings.run_timeout_seconds,
+                        "model_steps": self.settings.max_model_steps,
+                        "tool_calls": self.settings.max_tool_calls,
+                        "input_tokens": self.settings.context_input_tokens,
+                        "provider_seconds": getattr(
+                            getattr(self.provider, "limits", None), "timeout_seconds", None
+                        ),
+                    },
+                },
+                self.settings,
+            )
             async with asyncio.timeout(self.settings.run_timeout_seconds):
                 # Recheck queued messages accepted before the policy was installed.
                 await query(lambda: require_content(Run.get_by_id(run_id).message.content))
-                await self.loop(run_id)
+                await self.loop(run_id, state)
         except ContentRejected as exc:
+            await self.record_failure(run_id, exc, state, "content_rejected")
             await query(self.append, run_id, SAFE_OUTPUT, new_response=True)
-            await query(
-                Trace.create,
-                run=run_id,
-                kind="guardrail",
-                payload=json.dumps({"reason": exc.reason, "policy_version": POLICY_VERSION}),
+            await record_async(
+                run_id,
+                "guardrail",
+                {"reason": exc.reason, "policy_version": POLICY_VERSION},
+                self.settings,
             )
             await query(finish, run_id, "failed", "run.failed", {"message": SAFE_OUTPUT})
         except Waiting as exc:
             text = safe_text(str(exc))
-            await query(self.append, run_id, text, new_response=True)
-            await query(finish, run_id, "waiting_for_user", "run.waiting", {"message": text})
+            await query(wait_for_user, run_id, text)
         except Interrupted:
             await query(finish, run_id, "interrupted", "run.interrupted", {})
-        except (UnknownOutcome, TimeoutError):
-            await self.stopped(run_id)
-        except Exception:
+        except (UnknownOutcome, TimeoutError) as exc:
+            await self.stopped(
+                run_id,
+                state,
+                exc,
+                "run_timeout" if isinstance(exc, TimeoutError) else "unknown_outcome",
+            )
+        except Exception as exc:
+            await self.record_failure(run_id, exc, state)
             unknown = await query(mark_uncertain, run_id)
             await query(
                 finish,
                 run_id,
                 "needs_reconciliation" if unknown else "failed",
                 "run.failed",
-                {"message": "Agent failed. Check provider configuration and try again."},
+                {
+                    "message": self.failure_message(exc),
+                    "code": getattr(exc, "code", "internal_error"),
+                },
             )
             log.error("Agent run failed", extra={"run_id": run_id})
 
-    async def stopped(self, run_id):
+    async def stopped(self, run_id, state, exc, code):
+        await self.record_failure(run_id, exc, state, code)
+
         def settle():
             with db.atomic("IMMEDIATE"):
                 # Cancellation can race an offloaded terminal commit. Keep its outcome.
@@ -163,6 +212,58 @@ class Runner:
                 )
 
         await query(settle)
+
+    async def record_failure(self, run_id, exc, state, code=None):
+        dispatched = None
+        try:
+            dispatched = await query(
+                lambda: (
+                    Action.select()
+                    .where((Action.run == run_id) & Action.state.in_(["dispatching", "unknown"]))
+                    .exists()
+                )
+            )
+        except Exception:
+            pass
+        await record_async(
+            run_id,
+            "error",
+            {
+                **error_metadata(exc),
+                "code": code or getattr(exc, "code", "internal_error"),
+                "stage": state.stage,
+                "action_outcome_uncertain": dispatched,
+                "tool_calls_consumed": state.total_calls,
+                "max_tool_calls": self.settings.max_tool_calls,
+                "max_model_steps": self.settings.max_model_steps,
+                "run_timeout_seconds": self.settings.run_timeout_seconds,
+                "provider_timeout_seconds": getattr(
+                    getattr(self.provider, "limits", None), "timeout_seconds", None
+                ),
+                "step": state.step,
+                "elapsed_ms": int((time.monotonic() - state.started) * 1000),
+            },
+            self.settings,
+        )
+
+    @staticmethod
+    def failure_message(exc):
+        return {
+            "repeated_calls": (
+                "The assistant repeated the same lookups without progress. "
+                "Please narrow your request."
+            ),
+            "model_step_limit": (
+                "The assistant reached its decision limit before finishing. "
+                "Please narrow your request."
+            ),
+            "tool_limit": "The assistant reached its tool-call limit before finishing.",
+            "context_budget": (
+                "The scheduling details could not fit in the context budget. "
+                "Please narrow your request."
+            ),
+            "timeout": "The model provider timed out. Please try again.",
+        }.get(getattr(exc, "code", ""), "Agent failed. Check provider configuration and try again.")
 
     @staticmethod
     def append(run_id, text, *, new_response=False):
@@ -184,7 +285,7 @@ class Runner:
             msg.save()
             emit(run_id, "message.delta", {"message_id": msg.id, "text": text})
 
-    async def loop(self, run_id):
+    async def loop(self, run_id, state):
         if not await query(checkpoint, run_id):
             raise Interrupted()
         pending = await query(authorized, run_id)
@@ -195,14 +296,17 @@ class Runner:
                     "name": "search_history",
                     "description": "Retrieve original user messages for missing context. "
                     "Use short keywords or an empty query for recent messages. "
-                    "Fetch an excerpt's full original using source_id; "
+                    "Fetch originals using source_id and offset (Unicode characters, default 0). "
+                    "When next_offset is non-null, continue with that source_id and offset "
+                    "until complete=true; a page alone may omit important trailing details. "
                     "set role=assistant only to find past assistant replies.",
                     "parameters": {
                         "type": "object",
                         "properties": {
                             "query": {"type": "string"},
                             "role": {"type": "string", "enum": ["user", "assistant"]},
-                            "source_id": {"type": "string"},
+                            "source_id": {"type": "string", "minLength": 1},
+                            "offset": {"type": "integer", "minimum": 0},
                         },
                         "required": ["query"],
                         "additionalProperties": False,
@@ -214,7 +318,9 @@ class Runner:
         if pending:
             # Check mandatory intent/reserves before dispatching an authorized action.
             await query(assemble, run_id, self.settings, tools)
-            result = await self.tool(run_id, pending[0], pending[1], "confirmed-action")
+            result = await self.tool(
+                run_id, pending[0], pending[1], "confirmed-action", state=state
+            )
             exchanges.append(
                 [
                     {
@@ -238,67 +344,97 @@ class Runner:
                     },
                 ]
             )
-        total_calls = int(bool(pending))
+        total_calls = state.total_calls = int(bool(pending))
         seen_call_ids = {"confirmed-action"} if pending else set()
+        previous_batch, repeats = None, 0
+        previous_results, unchanged_results = None, 0
         for step in range(self.settings.max_model_steps):
+            state.step, state.stage = step, "context"
             if not await query(checkpoint, run_id):
                 raise Interrupted()
             base = await query(assemble, run_id, self.settings, tools)
-            messages = fit_prompt(base, exchanges, tools, self.settings)
+            audit = {
+                "step": step,
+                "schema_hash": hashlib.sha256(
+                    json.dumps(tools, sort_keys=True).encode()
+                ).hexdigest(),
+            }
+            try:
+                messages = fit_prompt(base, exchanges, tools, self.settings, audit=audit)
+                audit["prompt_hash"] = hashlib.sha256(
+                    json.dumps(messages, sort_keys=True).encode()
+                ).hexdigest()
+            finally:
+                await record_async(run_id, "context", audit, self.settings)
             calls, text = [], ""
             usage = {}
             started = time.monotonic()
-            async for event in self.provider.stream(messages, tools):
-                if not await query(checkpoint, run_id):
-                    raise Interrupted()
-                if event.kind == "text_delta":
-                    text += event.text
-                    if (
-                        len(text) > 24000
-                        or estimate(text, self.settings) > self.settings.context_output_tokens
-                    ):
-                        raise RuntimeError("Output budget exceeded")
-                elif event.kind == "usage":
-                    usage = {
-                        k: v
-                        for k, v in event.usage.items()
-                        if k in {"prompt_tokens", "completion_tokens", "total_tokens"}
-                        and isinstance(v, int)
-                        and v >= 0
-                    }
-                elif event.kind == "tool_call":
-                    if (
-                        not isinstance(event.call_id, str)
-                        or not event.call_id
-                        or event.call_id in seen_call_ids
-                        or not isinstance(event.arguments, dict)
-                    ):
-                        raise RuntimeError("Invalid tool call protocol")
-                    seen_call_ids.add(event.call_id)
-                    calls.append(event)
-                    total_calls += 1
-                    if len(calls) > 8 or total_calls > self.settings.max_tool_calls:
-                        raise RuntimeError("Tool budget exceeded")
-            await query(
-                Trace.create,
-                run=run_id,
-                kind="model",
-                payload=json.dumps(
+            state.stage = "model"
+            await record_async(run_id, "model.started", {"step": step}, self.settings)
+            try:
+                async for event in self.provider.stream(messages, tools):
+                    if not await query(checkpoint, run_id):
+                        raise Interrupted()
+                    if event.kind == "text_delta":
+                        text += event.text
+                        if (
+                            len(text) > 24000
+                            or estimate(text, self.settings) > self.settings.context_output_tokens
+                        ):
+                            raise RunFailure("output_limit", "Output budget exceeded")
+                    elif event.kind == "usage":
+                        usage = {
+                            k: v
+                            for k, v in event.usage.items()
+                            if k in {"prompt_tokens", "completion_tokens", "total_tokens"}
+                            and isinstance(v, int)
+                            and v >= 0
+                        }
+                    elif event.kind == "tool_call":
+                        if (
+                            not isinstance(event.call_id, str)
+                            or not event.call_id
+                            or event.call_id in seen_call_ids
+                            or not isinstance(event.arguments, dict)
+                        ):
+                            raise RunFailure("tool_protocol", "Invalid tool call protocol")
+                        seen_call_ids.add(event.call_id)
+                        calls.append(event)
+                        total_calls += 1
+                        state.total_calls = total_calls
+                        if len(calls) > 8 or total_calls > self.settings.max_tool_calls:
+                            raise RunFailure("tool_limit", "Tool budget exceeded")
+            except BaseException as exc:
+                await record_async(
+                    run_id,
+                    "model.failed",
                     {
                         "step": step,
-                        "provider": self.settings.llm_provider,
-                        "model": self.settings.llm_model,
-                        "prompt_version": 5,
-                        "estimated_input_tokens": estimate(messages, self.settings),
-                        "usage": usage,
                         "elapsed_ms": int((time.monotonic() - started) * 1000),
-                        "output_chars": len(text),
-                        "tool_count": len(calls),
-                    }
-                ),
+                        **error_metadata(exc),
+                    },
+                    self.settings,
+                )
+                raise
+            await record_async(
+                run_id,
+                "model",
+                {
+                    "step": step,
+                    "provider": self.settings.llm_provider,
+                    "model": self.settings.llm_model,
+                    "prompt_version": 5,
+                    "estimated_input_tokens": estimate(messages, self.settings),
+                    "usage": usage,
+                    "elapsed_ms": int((time.monotonic() - started) * 1000),
+                    "output_chars": len(text),
+                    "tool_count": len(calls),
+                },
+                self.settings,
             )
             if not await query(checkpoint, run_id):
                 raise Interrupted()
+            state.stage = "validation"
             secrets = (
                 self.settings.master_secret,
                 *self.settings.master_secret_previous,
@@ -309,13 +445,26 @@ class Runner:
             require_content(text, secrets=secrets)
             for call in calls:
                 if call.name not in {t["function"]["name"] for t in tools}:
-                    raise RuntimeError("Unknown tool proposal")
+                    raise RunFailure("unknown_tool", "Unknown tool proposal")
                 require_content(call.arguments, secrets=secrets)
             await query(self.append, run_id, text, new_response=True)
+            state.stage = "decision"
+            batch = tuple(sorted(tool_fingerprint(c.name, c.arguments) for c in calls))
+            repeats = repeats + 1 if batch == previous_batch else 1
+            previous_batch = batch
+            if calls:
+                await record_async(
+                    run_id,
+                    "decision",
+                    {"step": step, "fingerprints": list(batch), "consecutive_repeats": repeats},
+                    self.settings,
+                )
+                if repeats >= 3 and unchanged_results >= 2:
+                    raise RunFailure("repeated_calls", "Repeated calls without progress")
             if not calls:
                 await query(finish, run_id, "succeeded", "run.completed", {})
                 return
-            exchange = [
+            exchange: list[dict] = [
                 {
                     "role": "assistant",
                     "content": text or None,
@@ -339,6 +488,7 @@ class Runner:
                     call.arguments,
                     call.call_id,
                     excluded=covered_sources(messages + exchange),
+                    state=state,
                 )
                 exchange.append(
                     {
@@ -347,19 +497,42 @@ class Runner:
                         "content": json.dumps(result),
                     }
                 )
+            signature = (
+                batch,
+                tool_fingerprint("results", [json.loads(m["content"]) for m in exchange[1:]]),
+            )
+            unchanged_results = unchanged_results + 1 if signature == previous_results else 1
+            previous_results = signature
             exchanges.append(exchange)
-        raise RuntimeError("Model step budget exceeded")
+        state.stage = "budget"
+        raise RunFailure("model_step_limit", "Model step budget exceeded")
 
-    async def tool(self, run_id, name, arguments, call_id, *, excluded=None):
+    async def tool(self, run_id, name, arguments, call_id, *, excluded=None, state=None):
+        state = state or RunState()
+        state.stage = "tool"
         started = time.monotonic()
+        await record_async(
+            run_id,
+            "tool.started",
+            {
+                "step": state.step,
+                "name": name,
+                "call_id": call_id,
+                "fingerprint": tool_fingerprint(name, arguments),
+            },
+            self.settings,
+        )
         result, error = None, None
         try:
             if name == "search_history":
                 if (
                     not isinstance(arguments, dict)
-                    or not {"query"} <= set(arguments) <= {"query", "role", "source_id"}
+                    or not {"query"} <= set(arguments) <= {"query", "role", "source_id", "offset"}
                     or not isinstance(arguments.get("query"), str)
                     or arguments.get("role", "user") not in ("user", "assistant")
+                    or type(arguments.get("offset", 0)) is not int
+                    or arguments.get("offset", 0) < 0
+                    or ("offset" in arguments and "source_id" not in arguments)
                     or (
                         "source_id" in arguments
                         and (
@@ -370,15 +543,21 @@ class Runner:
                 ):
                     result = {"error": "Invalid history query arguments"}
                 else:
-                    result = await query(
-                        retrieve,
-                        run_id,
-                        arguments["query"],
-                        excluded,
-                        self.settings,
-                        role=arguments.get("role", "user"),
-                        source_id=arguments.get("source_id"),
-                    )
+                    try:
+                        result = await query(
+                            retrieve,
+                            run_id,
+                            arguments["query"],
+                            excluded,
+                            self.settings,
+                            role=arguments.get("role", "user"),
+                            source_id=arguments.get("source_id"),
+                            offset=arguments.get("offset", 0),
+                        )
+                    except ContextBudgetExceeded:
+                        raise
+                    except ValueError:
+                        result = {"error": "Invalid history offset for source"}
             else:
                 result = await self.executor.execute(run_id, name, arguments)
             return safe_data(
@@ -399,10 +578,15 @@ class Runner:
                 )
                 else "ToolExecutionError"
             )
+            await record_async(
+                run_id,
+                "tool.failed",
+                {"call_id": call_id, "name": name, **error_metadata(exc)},
+                self.settings,
+            )
             raise
         finally:
-            await query(
-                record_tool,
+            await record_tool_async(
                 run_id,
                 name,
                 call_id,

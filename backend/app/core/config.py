@@ -19,6 +19,8 @@ class Settings(BaseSettings):
     public_origin: str = "http://localhost:3002"
     cookie_secure: bool = False
     session_days: int = 7
+    # Only ingress peers that overwrite X-Real-IP may be listed here.
+    trusted_ingress_cidrs: list[str] = Field(default_factory=list)
 
     # Provider selection and explicit local-only Codex opt-in.
     llm_provider: str = "codex"
@@ -40,7 +42,7 @@ class Settings(BaseSettings):
 
     # Estimated token/cost limits; no paid summarizer or tokenizer dependency.
     context_window_tokens: int = Field(default=32768, ge=1024)
-    context_input_tokens: int = Field(default=8000, ge=512)
+    context_input_tokens: int = Field(default=12000, ge=512)
     context_output_tokens: int = Field(default=4096, ge=1)
     context_safety_tokens: int = Field(default=1024, ge=0)
     context_tool_result_tokens: int = Field(default=2500, ge=0)

@@ -3,10 +3,11 @@ from uuid import uuid4
 
 import httpx
 import pytest
+from conftest import start_test_run
 
 from app.calcom.client import CalClient, CalError
 from app.db.models import Action
-from app.db.repository import accept
+from app.db.repository import accept, wait_for_user
 from app.tools.durations import duration_plan
 from app.tools.executor import Executor, Waiting
 
@@ -78,6 +79,8 @@ class Calendar:
                     "end": f"2026-11-06T{6 + minutes // 60:02}:{minutes % 60:02}:00Z",
                     "status": "accepted",
                 }
+        elif path == "/v2/conferencing/default":
+            data = {"appSlug": "daily-video"}
         elif path == "/v2/schedules":
             data = [{"id": 7, "isDefault": True}]
         elif path == "/v2/slots":
@@ -107,6 +110,7 @@ async def test_create_missing_type_confirm_then_book_original_request(
     calendar = Calendar(existing)
     executor = calendar.executor(vault)
     run = accept(user, f"Book a {requested}-minute meeting", str(uuid4()))["run_id"]
+    start_test_run(run)
     plan = await executor.execute(
         run, "plan_booking_duration", {"duration_minutes": requested, "event_type_ids": [10]}
     )
@@ -127,7 +131,10 @@ async def test_create_missing_type_confirm_then_book_original_request(
     assert proposal["duration_minutes"] == effective
     assert proposal["requested_duration_minutes"] == requested
 
+    wait_for_user(run, str(waiting.value))
     confirmed = accept(user, "yes", str(uuid4()))["run_id"]
+
+    start_test_run(confirmed)
     created = await executor.execute(confirmed, "create_event_type", args)
     assert created["response"]["id"] == 11
     plan = await executor.execute(
@@ -166,6 +173,7 @@ async def test_slot_and_booking_tools_cannot_skip_missing_shorter_type(
     calendar = Calendar(existing)
     executor = calendar.executor(vault)
     run = accept(user, f"Book {requested} minutes", str(uuid4()))["run_id"]
+    start_test_run(run)
     for tool, args in [
         ("create_booking", {**BOOKING_ARGS, "event_type_id": 10, "duration_minutes": requested}),
         (
@@ -189,6 +197,7 @@ async def test_creation_cannot_skip_exact_or_smallest_rounded_choice(account, re
     user, vault = account
     calendar = Calendar(40)
     run = accept(user, "book a meeting", str(uuid4()))["run_id"]
+    start_test_run(run)
     result = await calendar.executor(vault).execute(
         run,
         "create_event_type",
@@ -210,6 +219,7 @@ async def test_rounded_booking_still_respects_maximum_and_end(account, constrain
     user, vault = account
     calendar = Calendar(120)
     run = accept(user, "book 110 minutes", str(uuid4()))["run_id"]
+    start_test_run(run)
     result = await calendar.executor(vault).execute(
         run,
         "create_booking",
@@ -225,6 +235,7 @@ async def test_planner_checks_live_ownership(account):
     calendar = Calendar(30)
     calendar.types[10]["ownerId"] = 99
     run = accept(user, "book 30 minutes", str(uuid4()))["run_id"]
+    start_test_run(run)
     result = await calendar.executor(vault).execute(
         run, "plan_booking_duration", {"duration_minutes": 30, "event_type_ids": [10]}
     )

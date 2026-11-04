@@ -4,6 +4,7 @@ from concurrent.futures import ThreadPoolExecutor
 from uuid import uuid4
 
 import pytest
+from conftest import start_test_run
 
 from app.db.dispatch import StalePreparation, prepare_action, settle
 from app.db.models import Action, Confirmation, Connection, Event, Message, Run, db
@@ -12,6 +13,7 @@ from app.db.repository import accept, claim
 
 def proposal(user, content="cancel"):
     accepted = accept(user, content, str(uuid4()))
+    start_test_run(accepted["run_id"])
     return Run.get_by_id(accepted["run_id"]), Connection.get(Connection.user == user)
 
 

@@ -28,7 +28,7 @@ HISTORY_STOP_WORDS = frozenset(
 
 
 class ContextBudgetExceeded(ValueError):
-    pass
+    code = "context_budget"
 
 
 def encode(value):
@@ -82,6 +82,7 @@ def data_message(label, value):
 def covered_sources(messages):
     """Only complete sources are covered; excerpts must remain retrievable in full."""
     result = set()
+    segments: dict[tuple, list[tuple[int, int]]] = {}
 
     def collect(value):
         if isinstance(value, list):
@@ -89,6 +90,17 @@ def covered_sources(messages):
                 collect(item)
         elif isinstance(value, dict):
             if (
+                isinstance(value.get("source_id"), str)
+                and isinstance(value.get("content"), str)
+                and all(
+                    type(value.get(k)) is int for k in ("offset", "end_offset", "total_characters")
+                )
+            ):
+                start, end, total = (value[k] for k in ("offset", "end_offset", "total_characters"))
+                if 0 <= start <= end <= total and end - start == len(value["content"]):
+                    key = (value["source_id"], value.get("conversation_id"), total)
+                    segments.setdefault(key, []).append((start, end))
+            elif (
                 isinstance(value.get("source_id"), str)
                 and not value.get("truncated")
                 and isinstance(value.get("content"), str)
@@ -109,6 +121,14 @@ def covered_sources(messages):
             collect(json.loads(content))
         except (ValueError, RecursionError):
             continue
+    for (source_id, _, total), ranges in segments.items():
+        covered = 0
+        for start, end in sorted(ranges):
+            if start > covered:
+                break
+            covered = max(covered, end)
+        if covered == total:
+            result.add(source_id)
     return result
 
 
@@ -196,14 +216,20 @@ def assemble(run_id, settings=None, tools=None):
     included = {entry["source_id"] for entry in requests} | {current.id}
     rows = [row for row in previous.limit(256) if row.id not in included]
     history = [{"role": m.role, "content": encode(source(m))} for m in reversed(rows)]
-    target = int(budget * settings.context_compaction_threshold)
+    target = max(
+        estimate([*mandatory, latest], settings),
+        min(
+            int(budget * settings.context_compaction_threshold),
+            budget - min(settings.context_tool_result_tokens, budget // 3),
+        ),
+    )
     if estimate([*mandatory, *history, latest], settings) <= target:
         return [*mandatory, *history, latest]
 
     # Select complete recent canonical messages; canonical messages contain no tool
     # protocol fragments. Older coverage is a fresh bounded extractive snapshot.
     recent: list[dict] = []
-    for row in rows[:20]:
+    for row in rows[: max(0, 24 - len(mandatory) - 2)]:
         candidate = {"role": row.role, "content": encode(source(row))}
         if estimate([*mandatory, candidate, *recent, latest], settings) > target:
             break
@@ -237,36 +263,166 @@ def assemble(run_id, settings=None, tools=None):
     return [*mandatory, *recent, latest]
 
 
-def fit_prompt(base, exchanges, tools, settings):
-    """Drop oldest *complete* tool exchanges; preserve latest protocol IDs/JSON.
+def compact_result(name, value):
+    """Keep scheduling identities/facts; full detail can be fetched by exact ID."""
+    fields = {
+        "list_event_types": {
+            "id",
+            "ownerId",
+            "title",
+            "slug",
+            "length",
+            "lengthInMinutes",
+            "lengthInMinutesOptions",
+            "hidden",
+            "minimumBookingNotice",
+        },
+        "list_bookings": {
+            "uid",
+            "id",
+            "title",
+            "start",
+            "end",
+            "status",
+            "eventTypeId",
+        },
+    }.get(name)
+    if fields and isinstance(value, list):
+        return [
+            {k: v for k, v in row.items() if k in fields} if isinstance(row, dict) else row
+            for row in value
+        ]
+    if fields and isinstance(value, dict) and isinstance(value.get("bookings"), list):
+        return {**value, "bookings": compact_result(name, value["bookings"])}
+    return {
+        "omitted": "Result exceeded context budget. Narrow the request or fetch "
+        "specific resource details; repeating this exact lookup will not help."
+    }
 
-    Oversized latest tool bodies are replaced as whole JSON values with an explicit
-    omission receipt. Nothing is compacted while a tool is being dispatched.
-    """
-    groups = list(exchanges)
+
+def fit_prompt(base, exchanges, tools, settings, *, audit=None):
+    """Fit complete exchanges, compacting large results individually."""
+    groups = [[dict(m) for m in group] for group in exchanges]
     base = list(base)
     budget = input_budget(settings, tools)
-    optional = [
-        message for message in base[3:-1] if not message["content"].startswith(USER_REQUESTS + ": ")
-    ]
-    while optional and estimate(base + [m for g in groups for m in g], settings) > budget:
-        base.remove(optional.pop(0))  # Never evict protected original user messages.
-    while groups and estimate(base + [m for g in groups for m in g], settings) > budget:
-        if len(groups) > 1:
-            groups.pop(0)
-            continue
-        group = [dict(m) for m in groups[0]]
-        for message in group:
-            if message["role"] == "tool":
-                message["content"] = encode(
-                    {
-                        "omitted": "Tool result exceeded context budget; "
-                        "consult canonical action evidence or re-read."
-                    }
-                )
-        groups = [group]
-        break
+    before = base + [m for g in groups for m in g]
+    changes: list[dict] = []
+    if audit is not None:
+        audit.update(
+            {
+                "budget_tokens": budget,
+                "schema_tokens": estimate(tools, settings),
+                "before_tokens": estimate(before, settings),
+                "source_ids_before": sorted(covered_sources(base)),
+                "changes": changes,
+            }
+        )
+    optional = [m for m in base[3:-1] if not m["content"].startswith(USER_REQUESTS + ": ")]
+
+    def size():
+        return estimate(base + [m for g in groups for m in g], settings)
+
+    while optional and size() > budget:
+        message = optional.pop(0)
+        base.remove(message)
+        changes.append(
+            {"operation": "drop_history", "source_ids": sorted(covered_sources([message]))}
+        )
+    while len(groups) > 1 and size() > budget:
+        removed = groups.pop(0)
+        changes.append(
+            {
+                "operation": "drop_exchange",
+                "call_ids": [m["tool_call_id"] for m in removed if m["role"] == "tool"],
+            }
+        )
+    if groups and size() > budget:
+        names = {c["id"]: c["function"]["name"] for m in groups[0] for c in m.get("tool_calls", [])}
+        candidates = sorted(
+            (m for m in groups[0] if m["role"] == "tool"),
+            key=lambda m: len(m["content"].encode()),
+            reverse=True,
+        )
+        for message in candidates:
+            if size() <= budget:
+                break
+            original = message["content"]
+            value = json.loads(original)
+            if (
+                names.get(message["tool_call_id"]) == "search_history"
+                and isinstance(value, list)
+                and value
+            ):
+                first = value[0]
+                if isinstance(first, dict) and all(
+                    key in first for key in ("offset", "end_offset", "total_characters", "content")
+                ):
+                    # Retain a smaller, valid source page rather than replacing its
+                    # continuation with an omission notice. Schema growth and current
+                    # intent can leave less room than the normal retrieval allowance.
+                    def history_page(length, first=first):
+                        end = first["offset"] + length
+                        total = first["total_characters"]
+                        return encode(
+                            [
+                                {
+                                    **first,
+                                    "content": first["content"][:length],
+                                    "end_offset": end,
+                                    "next_offset": end if end < total else None,
+                                    "complete": end == total,
+                                    "truncated": first["offset"] != 0 or end != total,
+                                }
+                            ]
+                        )
+
+                    low, high = 0, len(first["content"])
+                    while low < high:
+                        mid = (low + high + 1) // 2
+                        message["content"] = history_page(mid)
+                        if size() <= budget:
+                            low = mid
+                        else:
+                            high = mid - 1
+                    message["content"] = history_page(low)
+                    if low == 0 and first["content"]:
+                        raise ContextBudgetExceeded("History page cannot fit with current intent")
+                    changes.append(
+                        {
+                            "operation": "page_history_result",
+                            "call_id": message["tool_call_id"],
+                            "before_bytes": len(original.encode()),
+                            "after_bytes": len(message["content"].encode()),
+                        }
+                    )
+                    continue
+            compacted = encode(compact_result(names.get(message["tool_call_id"]), value))
+            if len(compacted.encode()) >= len(original.encode()):
+                continue  # Never replace tiny results with larger omission notices.
+            message["content"] = compacted
+            changes.append(
+                {
+                    "operation": "compact_result",
+                    "call_id": message["tool_call_id"],
+                    "before_bytes": len(original.encode()),
+                    "after_bytes": len(compacted.encode()),
+                    "omitted": isinstance(json.loads(compacted), dict)
+                    and "omitted" in json.loads(compacted),
+                }
+            )
     result = base + [m for g in groups for m in g]
+    if audit is not None:
+        audit.update(
+            {
+                "after_tokens": estimate(result, settings),
+                "source_ids_after": sorted(covered_sources(base)),
+                "result_sizes": [
+                    {"call_id": m["tool_call_id"], "bytes": len(m["content"].encode())}
+                    for m in result
+                    if m["role"] == "tool"
+                ],
+            }
+        )
     if estimate(result, settings) > budget:
         raise ContextBudgetExceeded("Complete tool exchange exceeds input budget")
     return result
@@ -279,8 +435,14 @@ def authorized(run_id):
     return None
 
 
-def retrieve(run_id, query, excluded=None, settings=None, *, role="user", source_id=None):
-    """Search original user messages by default; fetch exact sources for excerpts."""
+def retrieve(run_id, query, excluded=None, settings=None, *, role="user", source_id=None, offset=0):
+    """Return bounded pages of filtered originals; offsets count Unicode characters.
+
+    Exact IDs never bypass conversation/time boundaries. Continuations refer to the
+    same safe_text representation as the first page, rather than raw private data.
+    """
+    if type(offset) is not int or offset < 0 or (offset and not source_id):
+        raise ValueError("offset must be a nonnegative integer and requires source_id")
     settings = settings or Settings()
     run = Run.get_by_id(run_id)
     words = list(
@@ -310,12 +472,44 @@ def retrieve(run_id, query, excluded=None, settings=None, *, role="user", source
             order.insert(0, score.desc())
     results: list[dict] = []
     for message in rows.order_by(*order).limit(8):
-        entry = source(message)
-        # Keep the historical API's id field as well as explicit source provenance.
-        entry["id"] = message.id
-        if estimate([*results, entry], settings) > settings.context_retrieval_tokens:
-            entry = {**source(message, summary=True), "id": message.id}
-        if estimate([*results, entry], settings) > settings.context_retrieval_tokens:
-            continue
-        results.append(entry)
+        entry = {**source(message), "conversation_id": message.conversation_id}
+        text = entry["content"]
+        if offset > len(text):
+            raise ValueError("offset exceeds source length")
+
+        def page(end, entry=entry, text=text):
+            return {
+                **entry,
+                "id": entry["source_id"],
+                "content": text[offset:end],
+                "offset": offset,
+                "end_offset": end,
+                "total_characters": len(text),
+                "next_offset": end if end < len(text) else None,
+                "complete": end == len(text),
+                # A final suffix alone is still not the full source.
+                "truncated": offset != 0 or end != len(text),
+            }
+
+        # Bound serialized metadata and escaped/multibyte content together. No word
+        # clipping: concatenating contiguous pages reproduces the original tail.
+        low, high = offset, len(text)
+        while low < high:
+            mid = (low + high + 1) // 2
+            if estimate([*results, page(mid)], settings) <= settings.context_retrieval_tokens:
+                low = mid
+            else:
+                high = mid - 1
+        if low == offset and offset < len(text):
+            if results:
+                break  # This source remains discoverable on a subsequent search.
+            raise ContextBudgetExceeded(
+                "History retrieval budget cannot fit source metadata/content"
+            )
+        candidate = page(low)
+        if estimate([*results, candidate], settings) > settings.context_retrieval_tokens:
+            raise ContextBudgetExceeded("History retrieval budget cannot fit source metadata")
+        results.append(candidate)
+        if candidate["next_offset"] is not None:
+            break  # Reserve the remaining source for an explicit continuation.
     return results

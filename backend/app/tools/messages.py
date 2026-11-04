@@ -33,6 +33,16 @@ def confirmation_message(name, details, time_zone):
     if name == "cancel_booking":
         heading = f"Would you like me to cancel “{title}”?"
         lines = booking_details(details, time_zone)
+        lines.append("- **Scope:** The whole booking, including all attendees and seats.")
+        attendees = details.get("attendees") or []
+        if attendees:
+            labels = [
+                " <".join(filter(None, (a.get("name"), a.get("email"))))
+                + (">" if a.get("name") and a.get("email") else "")
+                or "Unnamed attendee"
+                for a in attendees
+            ]
+            lines.append(f"- **Attendees ({len(attendees)}):** " + "; ".join(labels))
     else:
         heading = f"Shall I create “{title}” as a reusable meeting type?"
         minutes = details["duration_minutes"]

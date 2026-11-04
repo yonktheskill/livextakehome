@@ -27,10 +27,18 @@ class ProviderCapabilities:
 class ProviderError(Exception):
     """Safe, application-authored message. Never put upstream bodies here."""
 
-    def __init__(self, message: str, *, code: str = "provider_error", retryable: bool = False):
+    def __init__(
+        self,
+        message: str,
+        *,
+        code: str = "provider_error",
+        retryable: bool = False,
+        diagnostics: dict | None = None,
+    ):
         super().__init__(message)
         self.code = code
         self.retryable = retryable
+        self.diagnostics = diagnostics or {}
 
 
 class Provider(Protocol):

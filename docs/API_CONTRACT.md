@@ -11,7 +11,7 @@ All backend paths retain `/api` through the Next.js same-origin proxy. JSON erro
 - `GET /api/connection` → `{connected:boolean, label:string|null}` (masked only).
 - `PUT /api/connection`: `{api_key}` → masked connection status. `DELETE /api/connection` disconnects integration, not app account.
 - `GET /api/chat/history` → `{messages:[{id,role,content,created_at,status}], receipts:[{action_id,kind,summary,details}], next_cursor:string|null}`; optional `before` cursor, chronological order within page. Receipts contain only booking creation; other completed actions appear as readable assistant messages.
-- `POST /api/chat/messages`: `{content,client_request_id}` → `{run_id,message_id,revision}`. UUID generated in browser; duplicate submission returns same result.
+- `POST /api/chat/messages`: `{content,client_request_id}` (content: 1–6,000 Unicode characters) → `{run_id,message_id,revision}`. UUID generated in browser; duplicate submission returns same result.
 - `GET /api/runs/{id}` → `{id,status}`.
 - `POST /api/runs/{id}/stop` → `{status,dispatch_committed:boolean}`.
 - `GET /api/runs/{id}/events?after=N`: SSE frames with `id: N`, `event: TYPE`, `data: JSON`. Honor Last-Event-ID too. Events are durable and strictly increasing per run.

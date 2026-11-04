@@ -29,6 +29,7 @@ export function useConversation(userId: string | number, onUnauthorized: () => v
   const activeRun = useRef<string | null>(null);
   const mounted = useRef(true);
   const key = `daylight-run:${userId}`;
+  const pendingKey = `daylight-pending:${userId}`;
   const authRef = useRef(onUnauthorized);
   useEffect(() => {
     authRef.current = onUnauthorized;
@@ -232,28 +233,56 @@ export function useConversation(userId: string | number, onUnauthorized: () => v
     },
     [history, key, report],
   );
+  const recover = useCallback(async () => {
+    try {
+      await history();
+      if (!mounted.current) return;
+      setError("");
+      let saved: string | null = null;
+      try {
+        saved = sessionStorage.getItem(key);
+        const raw = sessionStorage.getItem(pendingKey);
+        if (raw) {
+          const value = JSON.parse(raw) as Submission;
+          if (
+            typeof value.content !== "string" ||
+            !value.content.trim() ||
+            value.content.length > 12000 ||
+            typeof value.client_request_id !== "string" ||
+            !/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(value.client_request_id)
+          )
+            throw new Error("Invalid saved submission");
+          setPending(value);
+          setOptimisticMessage({
+            id: `pending:${value.client_request_id}`,
+            role: "user",
+            content: value.content,
+            status: "unconfirmed",
+            created_at: new Date().toISOString(),
+          });
+        }
+      } catch {
+        // Ignore unavailable storage or malformed data; never submit it automatically.
+      }
+      if (saved) connect(saved);
+    } catch (e) {
+      if (mounted.current) report(e);
+    } finally {
+      if (mounted.current) setLoading(false);
+    }
+  }, [history, connect, key, pendingKey, report]);
   useEffect(() => {
     mounted.current = true;
-    void (async () => {
-      try {
-        await history();
-        if (!mounted.current) return;
-        let saved: string | null = null;
-        try {
-          saved = sessionStorage.getItem(key);
-        } catch {}
-        if (saved) connect(saved);
-      } catch (e) {
-        if (mounted.current) report(e);
-      } finally {
-        if (mounted.current) setLoading(false);
-      }
-    })();
+    let cancelled = false;
+    void Promise.resolve().then(() => {
+      if (!cancelled) return recover();
+    });
     return () => {
+      cancelled = true;
       mounted.current = false;
       controller.current?.abort();
     };
-  }, [history, connect, key, report]);
+  }, [recover]);
   async function submit(content: string, retry = false) {
     if (sendLock.current || loading || (retry ? !pending : !!pending || !content.trim())) return false;
     sendLock.current = true;
@@ -268,6 +297,15 @@ export function useConversation(userId: string | number, onUnauthorized: () => v
       status: "sending",
       created_at: optimisticMessage?.created_at ?? new Date().toISOString(),
     };
+    try {
+      // Persist before POST: a lost response must not create a new request identity on reload.
+      sessionStorage.setItem(pendingKey, JSON.stringify(submission));
+    } catch {
+      setError("Browser session storage is unavailable. Enable it before sending a message.");
+      sendLock.current = false;
+      setSending(false);
+      return false;
+    }
     setPending(submission);
     setOptimisticMessage(optimistic);
     try {
@@ -275,6 +313,11 @@ export function useConversation(userId: string | number, onUnauthorized: () => v
         method: "POST",
         body: JSON.stringify(submission),
       });
+      try {
+        // Save the accepted run before dropping the only recoverable request identity.
+        sessionStorage.setItem(key, accepted.run_id);
+        sessionStorage.removeItem(pendingKey);
+      } catch {}
       setPending(null);
       setOptimisticMessage(null);
       setMessages((previous) =>
@@ -300,6 +343,9 @@ export function useConversation(userId: string | number, onUnauthorized: () => v
       return true;
     } catch (e) {
       if (e instanceof ApiError && e.status < 500) {
+        try {
+          sessionStorage.removeItem(pendingKey);
+        } catch {}
         setPending(null);
         setOptimisticMessage(null);
       } else {
@@ -350,13 +396,8 @@ export function useConversation(userId: string | number, onUnauthorized: () => v
     },
     reload: async () => {
       setLoading(true);
-      try {
-        await history();
-      } catch (e) {
-        report(e);
-      } finally {
-        setLoading(false);
-      }
+      setError("");
+      await recover();
     },
     loadOlder: cursor ? () => history(cursor).catch(report) : undefined,
   };

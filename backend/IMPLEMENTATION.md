@@ -71,7 +71,9 @@ Use explicit fake inference for offline UI checks, or configure OpenRouter model
   days; messages/actions/replay/context snapshots are retained.
 - Exact cancellations are re-read and fingerprinted, expire after ten minutes, and
   accept only an unambiguous plain yes/confirm response to one pending proposal.
-  Changed details require another confirmation. Recurring/seated bookings are excluded.
+  Changed details require another confirmation. Host cancellation covers the whole exact
+  booking and all attendees/seats; confirmation shows live attendees and this scope.
+  Recurring bookings/series remain excluded; seated rescheduling remains unsupported.
 - Booking creation and rescheduling validate personal ownership and live slots.
   `plan_booking_duration` prefers exact reuse, then exact creation using the application's
   documented creation choices, then the smallest reusable/creatable larger duration.
@@ -82,7 +84,7 @@ Use explicit fake inference for offline UI checks, or configure OpenRouter model
   and stores both original UID in inputs
   and replacement UID in canonical results. Required questions are collected before
   dispatch; arbitrary bypass flags cannot enter the schemas.
-- Basic reusable types use the one default schedule and documented Cal Video default,
+- Basic reusable types use the one default schedule and the verified account default conferencing app,
   60-minute notice, zero buffers and a unique generated slug. A narrowly matched explicit
   request such as “create a 45-minute Consultation type” executes directly. All other
   proposals ask exact permission, including implicit missing types. A combined
@@ -116,9 +118,11 @@ blocked rather than risking duplicate mutations. Bulk key re-encryption is defer
 
 Listing walks at most five 100-record cursor pages and filters overlap locally to
 include appointments crossing date boundaries; `truncated=true` means a partial view.
-It may need more targeted/indexed lookup for large accounts. Team/recurring/seated,
-verification-code and attendee-defined-location flows are outside this MVP. Complex
-booking-field value types beyond text need extension. DST/ambiguous relative-date
+Pass `next_cursor` back as `cursor` with the same filters to continue beyond those pages.
+Live booking fields accept validated bounded strings, booleans, finite numbers and string
+arrays. See [scheduling validation](../docs/scheduling-validation.md). Team/recurring flows,
+seated rescheduling, verification-code, structured address/split-name and attendee-defined
+location flows are outside this MVP. DST/ambiguous relative-date
 clarification is prompted; Python requires offset-aware instants and valid IANA zones,
 but does not independently parse natural-language time expressions.
 

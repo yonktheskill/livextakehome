@@ -86,6 +86,80 @@ describe("conversation delivery and recovery", () => {
     expect(submissions[0]).toBe(submissions[1]);
     unmount();
   });
+  it("reloads after an initial history failure and reconnects the saved run", async () => {
+    sessionStorage.setItem("daylight-run:1", "saved");
+    let reads = 0;
+    const fetcher = vi.fn(async (url: string) => {
+      if (url.includes("history")) {
+        if (++reads === 1) return json({ detail: "History unavailable" }, 503);
+        return json({ messages: [], next_cursor: null });
+      }
+      return new Response(new ReadableStream());
+    });
+    vi.stubGlobal("fetch", fetcher);
+    const { result, unmount } = renderHook(() => useConversation(1, authorized));
+    await waitFor(() => expect(result.current.error).toBe("History unavailable"));
+    await act(async () => {
+      await result.current.reload();
+    });
+    expect(result.current.error).toBe("");
+    expect(result.current.run).toBe("saved");
+    expect(fetcher.mock.calls.some(([url]) => url.includes("saved/events"))).toBe(true);
+    unmount();
+  });
+  it("restores uncertain delivery after reload, isolates users, and requires explicit retry", async () => {
+    const posts: string[] = [];
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async (url: string, init?: RequestInit) => {
+        if (url.includes("history")) return json({ messages: [], next_cursor: null });
+        if (url === "/api/chat/messages") {
+          posts.push(init!.body as string);
+          if (posts.length === 1) throw new TypeError("Lost response");
+          return json({ run_id: "r", message_id: "u", revision: 1 });
+        }
+        return new Response(new ReadableStream());
+      }),
+    );
+    const first = renderHook(() => useConversation(1, authorized));
+    await waitFor(() => expect(first.result.current.loading).toBe(false));
+    await act(async () => {
+      await first.result.current.submit("Book a meeting");
+    });
+    first.unmount();
+    const other = renderHook(() => useConversation(2, authorized));
+    await waitFor(() => expect(other.result.current.loading).toBe(false));
+    expect(other.result.current.pending).toBeNull();
+    other.unmount();
+    const restored = renderHook(() => useConversation(1, authorized));
+    await waitFor(() => expect(restored.result.current.loading).toBe(false));
+    expect(restored.result.current.pending?.content).toBe("Book a meeting");
+    expect(posts).toHaveLength(1);
+    await act(async () => {
+      expect(await restored.result.current.submit("New request")).toBe(false);
+    });
+    await act(async () => {
+      await restored.result.current.submit("", true);
+    });
+    expect(posts).toEqual([posts[0], posts[0]]);
+    expect(sessionStorage.getItem("daylight-pending:1")).toBeNull();
+    restored.unmount();
+  });
+  it("does not POST when the request identity cannot be persisted", async () => {
+    const fetcher = vi.fn(async () => json({ messages: [], next_cursor: null }));
+    vi.stubGlobal("fetch", fetcher);
+    const { result, unmount } = renderHook(() => useConversation(1, authorized));
+    await waitFor(() => expect(result.current.loading).toBe(false));
+    vi.spyOn(Storage.prototype, "setItem").mockImplementation(() => {
+      throw new Error("Denied");
+    });
+    await act(async () => {
+      expect(await result.current.submit("Hello")).toBe(false);
+    });
+    expect(fetcher).toHaveBeenCalledTimes(1);
+    expect(result.current.error).toContain("session storage is unavailable");
+    unmount();
+  });
   it("keeps an optimistic correction visible when the previous run refreshes history", async () => {
     let events!: ReadableStreamDefaultController<Uint8Array>;
     let accept!: (response: Response) => void;

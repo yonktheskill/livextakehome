@@ -135,18 +135,18 @@ class Executor:
                     self.record,
                     action_id,
                     "unknown" if exc.uncertain else "failed",
-                    {"error": str(exc)},
+                    {"error": str(exc), "code": exc.code, "diagnostics": exc.diagnostics},
                 )
                 if exc.uncertain:
                     raise UnknownOutcome() from None
-                return {"error": str(exc)}
+                return {"error": str(exc), "code": exc.code, "diagnostics": exc.diagnostics}
             outcome = {"response": result, "validated": frozen["validation"]}
             await query(self.record, action_id, "succeeded", outcome)
             return outcome
         except StalePreparation:
             raise Interrupted() from None
         except CalError as exc:
-            return {"error": str(exc)}
+            return {"error": str(exc), "code": exc.code, "diagnostics": exc.diagnostics}
         finally:
             await client.close()
 
@@ -157,10 +157,26 @@ class Executor:
                 raise Interrupted()
             run = Run.get_by_id(run_id)
             content = " ".join(run.message.content.split())
-            if not re.search(
-                r"(?<!\w)" + re.escape(preferred_name) + r"(?!\w)", content, re.IGNORECASE
+            identities = []
+            for clause in re.split(r"[;.!?]", content):
+                match = re.fullmatch(
+                    r"\s*(?:(?:hello|hi|actually)[, ]+)?(?:please )?"
+                    r"(?:call me|my name is|i am|i’m|i'm)\s+(.+?)\s*",
+                    clause,
+                    re.IGNORECASE,
+                )
+                if match:
+                    identities.append(match[1])
+            if (
+                len(identities) != 1
+                or identities[0].casefold() != preferred_name.casefold()
+                or re.search(r"\b(?:not|never|don't|do not|instead|or)\b", content, re.IGNORECASE)
+                or any(c in content for c in ('"', "“", "”", "?"))
             ):
-                return {"error": "Ask the user to supply their preferred name explicitly."}
+                return {
+                    "error": "Ask the user to identify their own preferred name explicitly; "
+                    "clarify ambiguity or negation."
+                }
             User.update(preferred_name=preferred_name).where(
                 User.id == run.conversation.user_id
             ).execute()
@@ -198,7 +214,7 @@ class Executor:
     @staticmethod
     async def read(client, name, args, conn):
         if name == "get_booking":
-            return await get_booking(client, args.booking_uid, conn.owner)
+            return await get_booking(client, args.booking_uid, conn.owner, allow_seated=True)
         if name == "get_event_type":
             return await get_type(client, args.event_type_id, conn.owner)
         if name == "plan_booking_duration":
@@ -247,8 +263,9 @@ class Executor:
             )
             return {"slots": result, "effective_duration_minutes": minutes}
         results: list[dict] = []
-        cursor = None
-        for _ in range(5):
+        cursor = args.cursor
+        seen_cursors = {cursor} if cursor else set()
+        for _ in range(args.max_pages):
             # API's afterStart/beforeEnd exclude crossing appointments. Walk bounded
             # owner/status pages and filter interval overlap locally instead.
             params = {"limit": 100}
@@ -266,8 +283,21 @@ class Executor:
             cursor = (
                 page.get("pagination", {}).get("nextCursor") if isinstance(page, dict) else None
             )
+            pagination = page.get("pagination", {}) if isinstance(page, dict) else {}
+            if pagination.get("hasMore") and not cursor:
+                raise CalError(
+                    "Cal.com reports more bookings without a continuation cursor; "
+                    "the search is incomplete. Retry later."
+                )
+            if cursor is not None and (not isinstance(cursor, str) or len(cursor) > 2000):
+                raise CalError(
+                    "Cal.com returned an unusable continuation cursor; search incomplete."
+                )
             if not cursor:
                 break
+            if cursor in seen_cursors:
+                raise CalError("Cal.com repeated a booking cursor; retry listing later.")
+            seen_cursors.add(cursor)
 
         def overlaps(booking):
             try:
@@ -277,4 +307,11 @@ class Executor:
             except (KeyError, ValueError, TypeError):
                 return False
 
-        return {"bookings": [b for b in results if overlaps(b)], "truncated": bool(cursor)}
+        result = {"bookings": [b for b in results if overlaps(b)], "truncated": bool(cursor)}
+        if cursor:
+            result["next_cursor"] = cursor
+            result["message"] = (
+                "Partial search only; continue with next_cursor and identical dates/status. "
+                "No matches on these pages does not establish that no bookings overlap."
+            )
+        return result

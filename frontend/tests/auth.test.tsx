@@ -53,6 +53,8 @@ describe("cookie auth", () => {
     await waitFor(() => expect(screen.getByRole("button", { name: "Create account" })).toBeEnabled());
     fireEvent.change(screen.getByLabelText("Email address"), { target: { value: "new@example.test" } });
     fireEvent.change(screen.getByLabelText("Password"), { target: { value: "example-passphrase" } });
+    expect(screen.getByLabelText("Password")).toHaveAttribute("minlength", "10");
+    expect(screen.getByLabelText("Password")).toHaveAttribute("maxlength", "256");
     const form = screen.getByRole("button", { name: "Create account" }).closest("form")!;
     fireEvent.change(screen.getByLabelText("Confirm password"), {
       target: { value: "different-passphrase" },

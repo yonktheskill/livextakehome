@@ -57,9 +57,12 @@ class OpenRouterProvider:
             raise ProviderError("Provider is closed", code="closed")
         payload = self._payload(messages, tools)
         emitted = False
+        attempt = 0
+        phase = "connect"
         try:
             async with asyncio.timeout(self.limits.timeout_seconds):
                 for attempt in range(self.limits.max_retries + 1):
+                    phase = "connect"
                     try:
                         completion = Completion(tools, self.limits)
                         async with self._client.stream(
@@ -79,11 +82,17 @@ class OpenRouterProvider:
                                     "OpenRouter request was rejected",
                                     code="http_error",
                                     retryable=retryable,
+                                    diagnostics={
+                                        "phase": "http_response",
+                                        "http_status": response.status_code,
+                                        "attempt": attempt + 1,
+                                    },
                                 )
                             if not response.headers.get("content-type", "").startswith(
                                 "text/event-stream"
                             ):
                                 raise invalid()
+                            phase = "stream"
                             lines = bounded_lines(response, self.limits.max_response_bytes)
                             async for data in sse_data(lines, self.limits.max_response_bytes):
                                 for event in completion.feed(data):
@@ -100,17 +109,32 @@ class OpenRouterProvider:
                         if emitted or not retryable or attempt == self.limits.max_retries:
                             if isinstance(error, ProviderError):
                                 raise ProviderError(
-                                    str(error), code=error.code, retryable=retryable and not emitted
+                                    str(error),
+                                    code=error.code,
+                                    retryable=retryable and not emitted,
+                                    diagnostics={
+                                        "phase": phase,
+                                        "attempt": attempt + 1,
+                                        **error.diagnostics,
+                                    },
                                 ) from None
                             raise ProviderError(
                                 "OpenRouter connection failed",
                                 code="transport",
                                 retryable=not emitted,
+                                diagnostics={
+                                    "phase": phase,
+                                    "attempt": attempt + 1,
+                                    "cause_class": type(error).__name__,
+                                },
                             ) from None
                         await asyncio.sleep(self.limits.retry_delay_seconds * 2**attempt)
         except TimeoutError:
             raise ProviderError(
-                "Provider request timed out", code="timeout", retryable=not emitted
+                "Provider request timed out",
+                code="timeout",
+                retryable=not emitted,
+                diagnostics={"phase": phase, "attempt": attempt + 1},
             ) from None
         except (UnicodeError, ValueError, TypeError, KeyError, AttributeError):
             raise invalid() from None

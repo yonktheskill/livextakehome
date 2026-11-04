@@ -4,13 +4,26 @@ import time
 from concurrent.futures import ThreadPoolExecutor
 from uuid import uuid4
 
+from conftest import start_test_run
+
 from app.db.database import initialize
 from app.db.models import Action, Confirmation, Conversation, Event, Message, Run, Trace, User, db
-from app.db.repository import accept, claim, claim_run, cleanup, emit, finish, recover, stop
+from app.db.repository import (
+    accept,
+    claim,
+    claim_run,
+    cleanup,
+    emit,
+    finish,
+    recover,
+    stop,
+    wait_for_user,
+)
 
 
 def action(user):
     result = accept(user, "book Alice", str(uuid4()))
+    start_test_run(result["run_id"])
     return Action.create(
         run=result["run_id"],
         revision=result["revision"],
@@ -56,13 +69,20 @@ def test_competing_executors_single_winner(account):
 def test_confirmation_consumed_once_and_stop(account):
     user, _ = account
     item = action(user)
-    item.state = "awaiting_confirmation"
+    item.state = "prepared"
     item.save()
     Confirmation.create(
         conversation=item.run.conversation_id, action=item, expires=time.time() + 600
     )
+    from app.tools.messages import confirmation_message
+
+    item.kind = "cancel_booking"
+    item.request = json.dumps({"validation": {"uid": "abc"}})
+    item.save()
+    wait_for_user(item.run_id, confirmation_message(item.kind, {"uid": "abc"}, "UTC"))
     assert not claim(item.id)
     accepted = accept(user, "yes", str(uuid4()))
+    start_test_run(accepted["run_id"])
     assert Action.get_by_id(item.id).run_id == accepted["run_id"]
     assert claim(item.id)
     assert not claim(item.id)

@@ -26,3 +26,10 @@ def account(database):
         generation=1,
     )
     return user, vault
+
+
+def start_test_run(run_id):
+    """Direct unit executors bypass the consumer, so explicitly acquire a run lease."""
+    from app.db.models import Run
+
+    Run.update(status="running").where(Run.id == run_id).execute()

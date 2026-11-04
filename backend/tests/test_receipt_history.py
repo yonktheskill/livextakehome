@@ -2,6 +2,7 @@ import json
 from datetime import UTC, datetime
 
 import pytest
+from conftest import start_test_run
 from cryptography.fernet import Fernet
 from fastapi.testclient import TestClient
 
@@ -34,6 +35,7 @@ def test_action_results_survive_reload_in_their_correct_display_and_are_owner_sc
             user = User.get_by_id(owner["id"])
             Connection.create(user=user, ciphertext="test-only", owner=42, generation=1)
             run_id = accept(user, "book", "receipt-test")["run_id"]
+            start_test_run(run_id)
             action_id, _ = Executor.prepare_action(
                 Run.get_by_id(run_id),
                 Connection.get(Connection.user == user),

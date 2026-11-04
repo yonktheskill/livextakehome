@@ -128,12 +128,22 @@ describe("optimistic chat delivery", () => {
     expect(screen.getByText("Delivery unconfirmed")).toBeInTheDocument();
     expect(input).toHaveValue("Book a meeting");
     fireEvent.change(input, { target: { value: "A different draft" } });
-    fetcher.mockImplementationOnce(async () => json({ run_id: "r", message_id: "u", revision: 1 }));
+    let retryRespond!: (response: Response) => void;
+    fetcher.mockImplementationOnce(
+      () =>
+        new Promise<Response>((resolve) => {
+          retryRespond = resolve;
+        }),
+    );
     fireEvent.click(screen.getByRole("button", { name: "Retry message" }));
+    fireEvent.change(input, { target: { value: "New draft while retrying" } });
+    await act(async () => {
+      retryRespond(json({ run_id: "r", message_id: "u", revision: 1 }));
+    });
     await screen.findByRole("button", { name: "Stop response" });
     expect(screen.getAllByText("Book a meeting")).toHaveLength(1);
     expect(screen.queryByText("Delivery unconfirmed")).not.toBeInTheDocument();
-    expect(input).toHaveValue("A different draft");
+    expect(input).toHaveValue("New draft while retrying");
     const posts = fetcher.mock.calls.filter(([url]) => url === "/api/chat/messages");
     expect(posts).toHaveLength(2);
     expect(posts[0][1]?.body).toBe(posts[1][1]?.body);

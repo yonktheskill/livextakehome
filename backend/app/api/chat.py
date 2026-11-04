@@ -5,6 +5,7 @@ from uuid import UUID
 
 from fastapi import APIRouter, HTTPException, Request
 from fastapi.responses import StreamingResponse
+from peewee import SQL
 from pydantic import BaseModel, Field
 
 from app.api.auth import current
@@ -19,7 +20,7 @@ router = APIRouter(prefix="/api")
 
 
 class Submission(BaseModel):
-    content: str = Field(min_length=1, max_length=12000)
+    content: str = Field(min_length=1, max_length=6000)
     client_request_id: UUID
 
 
@@ -193,14 +194,25 @@ async def events(run_id: str, request: Request, after: int = 0):
 
 
 @router.get("/runs/{run_id}/debug")
-async def debug(run_id: str, request: Request):
+async def debug(run_id: str, request: Request, after: int = 0, limit: int = 100):
+    if after < 0 or not 1 <= limit <= 500:
+        raise HTTPException(422, "Invalid diagnostic cursor or limit.")
     if not request.app.state.settings.debug_api:
         raise HTTPException(404, "Not found.")
     user = await current(request)
     await query(owned_run, run_id, user.id)
+    trace_id = SQL("id")  # Peewee supplies the implicit auto-increment key.
     return await query(
         lambda: [
-            {"kind": t.kind, "metadata": safe_data(json.loads(t.payload))}
-            for t in Trace.select().where(Trace.run == run_id).limit(100)
+            {
+                "id": t.id,
+                "created_at": t.created_at,
+                "kind": t.kind,
+                "metadata": safe_data(json.loads(t.payload)),
+            }
+            for t in Trace.select()
+            .where((Trace.run == run_id) & (trace_id > after))
+            .order_by(trace_id)
+            .limit(limit)
         ]
     )

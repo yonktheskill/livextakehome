@@ -265,6 +265,11 @@ class CodexProvider:
         from openai_codex.client import CodexClient
 
         process = None
+        diagnostics = {
+            "phase": "startup",
+            "sdk_version": SDK_VERSION,
+            "runtime_version": SDK_VERSION,
+        }
         try:
             with TemporaryDirectory(prefix="livex-inference-") as directory:
                 try:
@@ -275,7 +280,9 @@ class CodexProvider:
                         process = _Process(client)
                         self._clients.add(process)
                         await asyncio.to_thread(process.start)
+                        diagnostics["phase"] = "initialize"
                         await asyncio.to_thread(client.initialize)
+                        diagnostics["phase"] = "account_read"
                         account = await asyncio.to_thread(
                             client.account_read, {"refreshToken": False}
                         )
@@ -284,6 +291,7 @@ class CodexProvider:
                                 "Codex requires ChatGPT account login; API-key auth is rejected",
                                 code="account_required",
                             )
+                        diagnostics["phase"] = "thread_start"
                         thread = await asyncio.to_thread(
                             client.thread_start,
                             {
@@ -298,6 +306,8 @@ class CodexProvider:
                                 "baseInstructions": _INSTRUCTIONS,
                             },
                         )
+                        diagnostics["thread_id"] = thread.thread.id
+                        diagnostics["phase"] = "turn_start"
                         started = await asyncio.to_thread(
                             client.turn_start,
                             thread.thread.id,
@@ -307,6 +317,8 @@ class CodexProvider:
                                 "outputSchema": _schema(names, self.limits),
                             },
                         )
+                        diagnostics["turn_id"] = started.turn.id
+                        diagnostics["phase"] = "notifications"
                         text = ""
                         received = 0
                         while True:
@@ -319,16 +331,23 @@ class CodexProvider:
                             payload = dump(mode="json", by_alias=True)
                             received += len(json.dumps(payload).encode())
                             if received > self.limits.max_response_bytes:
-                                raise ValueError("oversized response")
+                                raise ProviderError(
+                                    "Codex response exceeded its limit", code="response_limit"
+                                )
                             if event.method == "item/completed":
                                 item = payload["item"]
                                 if item["type"] == "agentMessage":
                                     text = item["text"]
                                 elif item["type"] not in ("reasoning", "userMessage"):
-                                    raise ValueError("unexpected runtime tool/item")
+                                    raise ProviderError(
+                                        "Unexpected Codex runtime item", code="unexpected_item"
+                                    )
                             if event.method == "turn/completed":
                                 if payload["turn"]["status"] != "completed":
-                                    raise ValueError("incomplete turn")
+                                    raise ProviderError(
+                                        "Codex turn did not complete", code="incomplete_turn"
+                                    )
+                                diagnostics["phase"] = "decision_validation"
                                 events = _decision(text, names, self.limits)
                                 break
                 finally:
@@ -340,12 +359,20 @@ class CodexProvider:
         except asyncio.CancelledError:
             raise
         except TimeoutError:
-            raise ProviderError("Codex inference timed out", code="timeout") from None
-        except ProviderError:
-            raise
-        except Exception:
             raise ProviderError(
-                "Codex inference failed; check dedicated account setup", code="codex_failed"
+                "Codex inference timed out", code="timeout", diagnostics=diagnostics
+            ) from None
+        except ProviderError as exc:
+            exc.diagnostics.update(diagnostics)
+            raise
+        except Exception as exc:
+            diagnostics["cause_class"] = type(exc).__name__
+            raise ProviderError(
+                "Codex inference failed; check dedicated account setup",
+                code="invalid_decision"
+                if diagnostics["phase"] == "decision_validation"
+                else "codex_failed",
+                diagnostics=diagnostics,
             ) from None
         for result in events:
             yield result

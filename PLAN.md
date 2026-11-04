@@ -15,7 +15,7 @@ Build a chat assistant for a busy person managing their own Cal.com account. The
 | Credentials | At most one active Cal.com API key per user. A separate project OpenRouter API key stays server-side. |
 | Providers | Provider abstraction; OpenRouter/API-key access is the target. Use the developer's Codex account through the Python SDK for local development. |
 | Booking/rescheduling | Execute a clear request once required details and target are resolved. Clarify ambiguity. |
-| Cancellation | Ask for confirmation of the exact booking before cancelling. “Delete booking” means cancel. |
+| Cancellation | All managed bookings belong to the signed-in Cal.com host. Confirm the exact booking, then cancel the whole booking for all attendees, including seated bookings. “Delete booking” means cancel. |
 | Event types | Support creating reusable event types. Ask before creating a missing type as part of a booking. |
 | Event-type creation UX | A clear explicit creation request is sufficient authorization. For an implicitly needed type, ask; a combined confirmation can authorize creating the type and making the specified booking. |
 | Duration | Use live Cal.com configuration. Round unsupported requested lengths up to a supported length and disclose the adjustment. |
@@ -56,7 +56,7 @@ Store timestamps in UTC and retain the original IANA time zone. Supply current t
 
 For “wait, make it Friday,” retrieve the last relevant confirmed action and its booking UID, re-read the booking, check Friday's slots, and reschedule it. Preserve the chosen time, attendees, and duration unless the correction changes them. If the previous turn only collected details, revise that pending request instead. If multiple meetings could be meant, clarify.
 
-Cancellation confirmation binds to the exact UID and current booking details, not a generic “yes.” Recommended: expire pending confirmation after 10 minutes and invalidate it when the request or target changes. Re-read before mutation. Do not cancel a recurring series or a group of meetings under a single-booking confirmation.
+Cancellation confirmation binds to the exact UID and current booking details, not a generic “yes.” Recommended: expire pending confirmation after 10 minutes and invalidate it when the request or target changes. Re-read before mutation and show the live title, times, UID, attendees, and whole-booking scope. Host cancellation includes every attendee/seat of that exact booking; it is not an attendee seat-only cancellation. Do not cancel a recurring series (SERIES scope) or multiple distinct bookings under a single-booking confirmation.
 
 ### What “event-type defaults” means
 

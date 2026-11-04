@@ -92,6 +92,7 @@ def test_default_codex_startup_guidance_is_fail_closed(tmp_path):
         database_path=str(tmp_path / "codex.sqlite3"),
         master_secret=Fernet.generate_key().decode(),
         llm_provider="codex",
+        livex_codex_enabled=False,
     )
     with pytest.raises(RuntimeError, match="explicit development opt-in"):
         with TestClient(create_app(settings)):

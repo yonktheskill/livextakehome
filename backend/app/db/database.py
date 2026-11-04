@@ -65,4 +65,20 @@ async def query(fn, *args, **kwargs):
         with db.connection_context():
             return fn(*args, **kwargs)
 
-    return await asyncio.to_thread(execute)
+    task = asyncio.create_task(asyncio.to_thread(execute))
+    try:
+        return await asyncio.shield(task)
+    except asyncio.CancelledError:
+        # A worker thread cannot be cancelled. Drain it before terminal bookkeeping
+        # can inspect/invalidate the unit's writes, including repeated cancellation.
+        while not task.done():
+            try:
+                await asyncio.shield(task)
+            except asyncio.CancelledError:
+                continue
+            except Exception:
+                break  # Observe below; preserve the original cancellation.
+        # Observe failures too, while preserving the caller's cancellation.
+        if not task.cancelled():
+            task.exception()
+        raise

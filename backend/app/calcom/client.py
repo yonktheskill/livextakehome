@@ -16,9 +16,11 @@ VERSIONS = {
 
 
 class CalError(Exception):
-    def __init__(self, message, *, uncertain=False):
+    def __init__(self, message, *, uncertain=False, code="calcom_error", diagnostics=None):
         super().__init__(message)
         self.uncertain = uncertain
+        self.code = code
+        self.diagnostics = diagnostics or {}
 
 
 class CalClient:
@@ -62,7 +64,12 @@ class CalClient:
             uncertain = method != "GET"
             if uncertain:
                 message += " The operation outcome may be unknown."
-            raise CalError(message, uncertain=uncertain) from None
+            raise CalError(
+                message,
+                uncertain=uncertain,
+                code="calcom_transport",
+                diagnostics={"phase": "calcom_request", "cause_class": type(exc).__name__},
+            ) from None
         if response.status_code >= 400:
             messages = {
                 401: "Cal.com key expired or invalid; reconnect in settings.",
@@ -72,6 +79,8 @@ class CalClient:
             }
             raise CalError(
                 messages.get(response.status_code, "Cal.com rejected this request."),
+                code="calcom_http",
+                diagnostics={"phase": "calcom_response", "http_status": response.status_code},
                 uncertain=method != "GET"
                 and (response.status_code >= 500 or response.status_code == 408),
             )
@@ -89,12 +98,15 @@ class CalClient:
         await self.http.aclose()
 
 
-def owned_booking(data, owner):
+def owned_booking(data, owner, *, allow_seated=False):
     hosts = data.get("hosts", [])
     if not any(str(h.get("id")) == str(owner) for h in hosts):
         raise CalError("Booking ownership could not be verified.")
-    if data.get("recurringBookingUid") or data.get("recurrence") or data.get("seats"):
-        raise CalError("Recurring and seated bookings require the Cal.com interface.")
+    if data.get("recurringBookingUid") or data.get("recurrence"):
+        raise CalError("Recurring bookings require the Cal.com interface.")
+    seated = data.get("seats") or any(a.get("seatUid") for a in data.get("attendees", []))
+    if seated and not allow_seated:
+        raise CalError("Seated booking rescheduling requires the Cal.com interface.")
     return data
 
 

@@ -6,7 +6,7 @@ FRONTEND_PORT ?= 3002
 PUBLIC_ORIGIN ?= http://localhost:$(FRONTEND_PORT)
 BACKEND_EXTRAS = $(if $(filter codex,$(LLM_PROVIDER)),--extra codex,)
 
-.PHONY: help setup init-dev dev dev-backend dev-frontend up down logs migrate cleanup-traces format lint typecheck test test-backend test-frontend build check smoke-containers setup-codex codex-login test-codex
+.PHONY: help setup init-dev dev dev-backend dev-frontend up down logs migrate cleanup-traces format lint typecheck test test-backend test-frontend test-tooling build check smoke-containers setup-codex codex-login test-codex
 help:
 	@echo "setup / init-dev   Install dependencies / create private local configuration"
 	@echo "dev               Start frontend and backend (Ctrl-C stops both)"
@@ -19,10 +19,9 @@ setup:
 init-dev:
 	python3 scripts/init_dev.py
 dev:
-	@$(MAKE) dev-backend & backend_pid=$$!; $(MAKE) dev-frontend & frontend_pid=$$!; \
-	trap 'kill $$backend_pid $$frontend_pid 2>/dev/null || true' INT TERM EXIT; wait
+	@python3 scripts/dev_supervisor.py $(MAKE)
 dev-backend:
-	cd backend && uv run $(BACKEND_EXTRAS) uvicorn app.main:app --reload --host 127.0.0.1 --port 8000 --no-access-log
+	cd backend && uv run $(BACKEND_EXTRAS) uvicorn app.main:app --reload --host 127.0.0.1 --port 8000 --no-access-log --no-proxy-headers
 dev-frontend:
 	env -u MASTER_SECRET -u MASTER_SECRET_PREVIOUS -u OPENROUTER_API_KEY -u LIVEX_CODEX_AUTH_HOME pnpm --dir frontend dev --port $(FRONTEND_PORT)
 up:
@@ -46,11 +45,13 @@ lint:
 typecheck:
 	cd backend && uv run mypy app
 	pnpm --dir frontend typecheck
-test: test-backend test-frontend
+test: test-backend test-frontend test-tooling
 test-backend:
 	cd backend && uv run pytest -q
 test-frontend:
 	pnpm --dir frontend test
+test-tooling:
+	python3 -m unittest discover -s scripts/tests -v
 build:
 	pnpm --dir frontend build
 check: lint typecheck test

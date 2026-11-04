@@ -81,7 +81,7 @@ For public deployment, place HTTPS ingress in front, set `PUBLIC_ORIGIN` to its 
 
 ## Scheduling boundary
 
-The assistant manages **Bookings** through **Event Types** and **Slots**. Cal Events (tickets/RSVPs) and arbitrary Google/Outlook calendar entries are outside scope. A reusable event type is not an appointment. Cancellation retains booking history. Clear booking/reschedule instructions execute once resolved; cancellation and creating a missing type require the agreed confirmation flow.
+The assistant manages **Bookings** through **Event Types** and **Slots**. Cal Events (tickets/RSVPs) and arbitrary Google/Outlook calendar entries are outside scope. A reusable event type is not an appointment. Host cancellation retains booking history and cancels the whole exact booking for all attendees, including seated bookings; confirmation shows the live target and full scope. Recurring series cancellation and seated rescheduling remain unsupported. Clear booking/reschedule instructions execute once resolved; cancellation and creating a missing type require the agreed confirmation flow.
 
 Actions and response chunks are persisted before being published. A transactional dispatch claim orders incoming corrections against writes. SQLite cannot atomically commit an external Cal.com request; uncertain outcomes need reconciliation before another potentially duplicate write. See the plan for the exact boundary and acceptance requirements.
 
@@ -117,3 +117,45 @@ These checks use no extra service, model calls or dependencies. They are a finit
 ## Implementation status
 
 Frontend, backend, and provider milestones are implemented. Review findings have regression tests and fixes. Both Docker images build. Real HTTP two-container tests passed cookies/auth, proxying, dedupe, SSE/history, CSRF, restart persistence, and logout using explicit fake inference. Final checks passed 87 backend tests and 19 frontend tests, plus the 50-test provider suite with the optional SDK. A read-only Cal.com check using the supplied key could not establish a connection from this execution environment (no mutations were attempted). Live writes, signed-in model inference and browser visual verification remain unverified. The user's own preferred name is persisted; general contacts, screenshot input, other persistent preferences, and voice remain future work.
+
+## Agent diagnostics
+
+Chat submissions accept up to 6,000 Unicode characters in both the composer and
+API. Oversized drafts remain editable with feedback; they are not silently clipped.
+The 6,000-character limit leaves room for the system prompt, tool schemas and a
+retrieval result within the default 12,000 estimated-token input budget (12,000
+characters already exceeded it in an ordinary-text regression);
+escaping, unusual Unicode, action evidence or smaller configured budgets can still
+cause a safe context-budget failure rather than dropping current intent.
+
+Historical originals remain independently retrievable through `search_history`.
+Search returns bounded segments with source/conversation IDs, role, original timestamp
+and time zone. For a long source, call with its `source_id` and returned `next_offset`
+(Unicode character offset into filtered text), continuing until `complete=true`.
+`offset`, `end_offset` and `total_characters` support exact assembly; a suffix alone
+is still `truncated`. Only contiguous full coverage counts as a covered source.
+Exact lookups stay inside the run's conversation and historical time boundary;
+`role` filters discovery, while an exact source ID can retrieve either role.
+This pagination supplements the submission limit and also supports older longer rows.
+
+Agent inference defaults to a 12,000 estimated-token input allowance, including tool
+schemas. `CONTEXT_TOOL_RESULT_TOKENS=2500` reserves room when selecting optional
+history; latest tool results are compacted individually if necessary. Original user
+intent and complete call/result pairings remain protected. Three consecutive
+identical proposal batches with unchanged results stop with `repeated_calls`;
+changing results or arguments count as progress.
+
+The database `trace` table records operation starts, completed model/tool calls,
+structured failures, context fitting decisions and repeated-call fingerprints.
+Failures retain safe codes, stages, timings, budget consumption, application source
+locations and available provider status/version/turn metadata. Context traces retain
+source/call references, before/after estimates, compaction sizes and prompt/schema
+hashes, without copying assembled prompts, credentials or model reasoning. Tool
+traces retain original byte/item counts even when their payload is truncated.
+Trace persistence failures emit sanitized JSON to server logs; diagnostic failure
+does not replace the original operation failure. Detailed traces expire after 30 days.
+
+For local inspection, enable `DEBUG_API=true`. The authenticated, owner-scoped
+`GET /api/runs/{run_id}/debug?after=0&limit=100` returns an ordered list containing
+`id`, `created_at`, `kind` and `metadata`. Use the last returned `id` as `after` to
+read the next page; maximum page size is 500. It is disabled by default.

@@ -12,8 +12,8 @@ from app.agent import runner as runner_module
 from app.agent.runner import Runner
 from app.core.config import Settings
 from app.db.database import query
-from app.db.models import Action, Conversation, Event, Message, Run, User, db
-from app.db.repository import accept, claim_run, finish
+from app.db.models import Action, Conversation, Event, Message, Run, Trace, User, db
+from app.db.repository import accept, claim_run, finish, wait_for_user
 from app.main import create_app
 from app.providers.base import ProviderEvent
 from app.tools.executor import Waiting
@@ -86,10 +86,7 @@ async def test_bounded_pool_services_other_users_while_a_run_waits(account):
             )
             events = list(Event.select().where(Event.run == run_id).order_by(Event.sequence))
             assert [event.sequence for event in events] == [1, 2]
-            assert [event.kind for event in events] == [
-                "message.delta",
-                "run.completed",
-            ]
+            assert [event.kind for event in events] == ["message.delta", "run.completed"]
     finally:
         runner.stopping.set()
         await asyncio.wait_for(supervisor, 5)
@@ -97,9 +94,7 @@ async def test_bounded_pool_services_other_users_while_a_run_waits(account):
 
 
 @pytest.mark.asyncio
-async def test_correction_waits_for_its_conversation_without_blocking_other_users(
-    account,
-):
+async def test_correction_waits_for_its_conversation_without_blocking_other_users(account):
     user, vault = account
     first = enqueue("first", user)
     provider = GatedProvider("first", "correction", "other")
@@ -128,7 +123,7 @@ async def test_correction_waits_for_its_conversation_without_blocking_other_user
 
 
 @pytest.mark.asyncio
-async def test_failed_run_keeps_workers_available(account):
+async def test_failure_keeps_run_diagnostics_isolated_and_worker_available(account):
     _, vault = account
     failed = enqueue("failure")
     tool_started, fail_tool = asyncio.Event(), asyncio.Event()
@@ -159,6 +154,10 @@ async def test_failed_run_keeps_workers_available(account):
         await provider.wait_started("waiting")
         fail_tool.set()
         await wait_status(failed, "failed")
+        error = json.loads(Trace.get((Trace.run == failed) & (Trace.kind == "error")).payload)
+        assert error["stage"] == "tool"
+        assert error["step"] == 0
+        assert error["tool_calls_consumed"] == 1
         assert Run.get_by_id(waiting).status == "running"
         later = enqueue("later")
         await provider.wait_started("later")
@@ -244,13 +243,13 @@ async def test_cancellation_during_exception_bookkeeping_settles_run(account, mo
     finishing = asyncio.Event()
 
     async def delayed_finish(fn, *args, **kwargs):
-        if fn is finish and args[1] == "waiting_for_user":
+        if fn is wait_for_user:
             finishing.set()
             await asyncio.Event().wait()
         return await query(fn, *args, **kwargs)
 
     class ConfirmingRunner(Runner):
-        async def loop(self, run_id):
+        async def loop(self, run_id, state):
             raise Waiting("Confirm cancellation.")
 
     monkeypatch.setattr(runner_module, "query", delayed_finish)

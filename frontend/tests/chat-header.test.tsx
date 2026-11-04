@@ -4,7 +4,9 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { Chat } from "../components/chat";
 
 const { logout, refresh } = vi.hoisted(() => ({ logout: vi.fn(), refresh: vi.fn() }));
-vi.mock("../components/auth", () => ({ useAuth: () => ({ logout, refresh }) }));
+vi.mock("../components/auth", () => ({
+  useAuth: () => ({ logout, refresh, refreshProfile: async () => {} }),
+}));
 vi.mock("../lib/use-conversation", () => ({
   useConversation: () => ({ messages: [], receipts: [], loading: false, status: "", streamState: "idle" }),
 }));

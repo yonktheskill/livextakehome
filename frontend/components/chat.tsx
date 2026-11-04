@@ -12,13 +12,17 @@ import { ChatHeader } from "./chat-header";
 import { ActionReceipt, Welcome } from "./chat-content";
 import { SafeMarkdown } from "./markdown";
 import { MessageCopy } from "./message-copy";
+export const MAX_MESSAGE_CHARACTERS = 6000;
+
 export function Chat({ user }: { user: User }) {
-  const { logout, refresh, updateTimeZone } = useAuth();
+  const { logout, refresh, refreshProfile, updateTimeZone } = useAuth();
   const chat = useConversation(user.id, refresh);
   const [connection, setConnection] = useState<Connection | null>(null);
   const [connectionError, setConnectionError] = useState("");
   const [dialog, setDialog] = useState(false);
   const [draft, setDraft] = useState("");
+  const draftLength = Array.from(draft).length;
+  const tooLong = draftLength > MAX_MESSAGE_CHARACTERS;
   const [accountError, setAccountError] = useState("");
   const [loggingOut, setLoggingOut] = useState(false);
   const input = useRef<HTMLTextAreaElement>(null);
@@ -57,7 +61,7 @@ export function Chat({ user }: { user: User }) {
     if (nearBottom.current) scrollToBottom("instant");
   }, [chat.messages, chat.status, chat.receipts, scrollToBottom]);
   async function submit() {
-    if (!draft.trim() || chat.pending || chat.sending || chat.loading) return;
+    if (tooLong || !draft.trim() || chat.pending || chat.sending || chat.loading) return;
     const sent = draft;
     nearBottom.current = true;
     setDraft("");
@@ -231,7 +235,8 @@ export function Chat({ user }: { user: User }) {
                 ref={input}
                 value={draft}
                 onChange={(e) => setDraft(e.target.value)}
-                maxLength={16000}
+                aria-describedby="message-length"
+                invalid={tooLong}
                 placeholder="Message HelpBook…"
                 rows={2}
                 onKeyDown={(e) => {
@@ -257,18 +262,24 @@ export function Chat({ user }: { user: User }) {
                       <Square size={17} fill="currentColor" />
                     )}
                   </Button>
-                ) : (
+                ) : null}
+                {(!chat.run || !!draft.trim()) && (
                   <Button
                     aria-label="Send message"
                     className="send-button"
                     type="submit"
-                    disabled={!draft.trim() || chat.sending || chat.loading || !!chat.pending}
+                    disabled={tooLong || !draft.trim() || chat.sending || chat.loading || !!chat.pending}
                   >
                     {chat.sending ? <span className="button-loader" /> : <ArrowUp size={22} />}
                   </Button>
                 )}
               </div>
             </form>
+            <p id="message-length" role={tooLong ? "alert" : undefined}>
+              {tooLong
+                ? "Message is too long. Shorten it to 6,000 characters before sending."
+                : `${draftLength.toLocaleString("en-US")} / 6,000 characters`}
+            </p>
           </div>
           <Button
             className="scroll-bottom"
@@ -287,7 +298,13 @@ export function Chat({ user }: { user: User }) {
           open={dialog}
           onClose={() => setDialog(false)}
           connection={connection}
-          onChange={setConnection}
+          onChange={(value) => {
+            setConnection(value);
+            setAccountError("");
+            void refreshProfile().catch((e) =>
+              setAccountError(e instanceof Error ? e.message : "Unable to refresh your profile."),
+            );
+          }}
           onUnauthorized={refresh}
         />
       )}

@@ -15,6 +15,7 @@ describe("Cal.com connection controls", () => {
       <ConnectionDialog open onClose={close} connection={null} onChange={changed} onUnauthorized={vi.fn()} />,
     );
     const input = screen.getByLabelText("Cal.com API key");
+    expect(input).toHaveAttribute("maxlength", "1024");
     expect(input).toHaveAttribute("type", "password");
     fireEvent.change(input, { target: { value: "mock-offline-key" } });
     fireEvent.click(screen.getByRole("button", { name: "Show Cal.com API key" }));

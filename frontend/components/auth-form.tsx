@@ -81,10 +81,10 @@ export function AuthForm({ mode }: { mode: "login" | "register" }) {
                 name="password"
                 autoComplete={register ? "new-password" : "current-password"}
                 required
-                minLength={register ? 12 : 1}
-                maxLength={1024}
+                minLength={10}
+                maxLength={256}
               />
-              {register && <p className="field-hint">Use at least 12 characters.</p>}
+              {register && <p className="field-hint">Use at least 10 characters.</p>}
             </Field>
             {register && (
               <Field>
@@ -94,8 +94,8 @@ export function AuthForm({ mode }: { mode: "login" | "register" }) {
                   name="confirmPassword"
                   autoComplete="new-password"
                   required
-                  minLength={12}
-                  maxLength={1024}
+                  minLength={10}
+                  maxLength={256}
                 />
               </Field>
             )}

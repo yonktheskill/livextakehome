@@ -1,7 +1,7 @@
 import React from "react";
 import { act, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { Chat } from "../components/chat";
+import { Chat, MAX_MESSAGE_CHARACTERS } from "../components/chat";
 
 vi.mock("../components/auth", () => ({
   useAuth: () => ({ logout: vi.fn(), refresh: authorized }),
@@ -49,6 +49,31 @@ describe("chat composer controls", () => {
     render(<Chat user={user} />);
     return screen.findAllByRole("button", { name: "Copy message" });
   }
+
+  it("keeps oversized drafts intact, blocks Enter, and accepts the exact character limit", async () => {
+    await renderMessages();
+    const input = screen.getByRole("textbox", { name: "Message HelpBook" });
+    const send = screen.getByRole("button", { name: "Send message" });
+    const tail = " Attendee: Tail tail@example.test";
+    const valid = "x".repeat(MAX_MESSAGE_CHARACTERS - tail.length) + tail;
+    expect(MAX_MESSAGE_CHARACTERS).toBe(6000);
+    fireEvent.change(input, { target: { value: valid + "x" } });
+    expect(input).toHaveValue(valid + "x");
+    expect(input).toHaveAttribute("aria-invalid", "true");
+    expect(screen.getByRole("alert")).toHaveTextContent("Shorten it to 6,000 characters");
+    expect(send).toBeDisabled();
+    fireEvent.keyDown(input, { key: "Enter" });
+    expect(vi.mocked(fetch).mock.calls.some(([url]) => url === "/api/chat/messages")).toBe(false);
+    expect(input).toHaveValue(valid + "x");
+    fireEvent.change(input, { target: { value: valid } });
+    expect(input).toHaveValue(valid);
+    expect(send).toBeEnabled();
+    expect(screen.getByText("6,000 / 6,000 characters")).toBeInTheDocument();
+    // Match Python/Pydantic's Unicode character count, including astral characters.
+    fireEvent.change(input, { target: { value: "🙂".repeat(MAX_MESSAGE_CHARACTERS) } });
+    expect(send).toBeEnabled();
+    expect(screen.getByText("6,000 / 6,000 characters")).toBeInTheDocument();
+  });
 
   it("passes the account timezone to receipts restored from history", async () => {
     vi.stubGlobal(
@@ -203,6 +228,33 @@ describe("chat composer controls", () => {
     expect(button).toBeEnabled();
   });
 
+  it("sends a correction by pointer while keeping Stop visible", async () => {
+    const posts: string[] = [];
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async (url: string, init?: RequestInit) => {
+        if (url.includes("history")) return json({ messages: [], next_cursor: null });
+        if (url.endsWith("/connection")) return json({ connected: true });
+        if (url === "/api/chat/messages") {
+          posts.push(JSON.parse(init!.body as string).content);
+          return json({ run_id: "r", message_id: `u${posts.length}`, revision: posts.length });
+        }
+        return new Response(new ReadableStream());
+      }),
+    );
+    const { unmount } = render(<Chat user={user} />);
+    await screen.findByRole("heading", { name: "What’s on your calendar?" });
+    const input = screen.getByRole("textbox");
+    fireEvent.change(input, { target: { value: "Book a meeting" } });
+    fireEvent.click(screen.getByRole("button", { name: "Send message" }));
+    await screen.findByRole("button", { name: "Stop response" });
+    fireEvent.change(input, { target: { value: "Use tomorrow instead" } });
+    expect(screen.getByRole("button", { name: "Stop response" })).toBeVisible();
+    fireEvent.click(screen.getByRole("button", { name: "Send message" }));
+    await waitFor(() => expect(posts).toEqual(["Book a meeting", "Use tomorrow instead"]));
+    unmount();
+  });
+
   it("replaces Send with Stop during a run and restores Send with the draft intact", async () => {
     let events!: ReadableStreamDefaultController<Uint8Array>;
     let confirmStop!: (response: Response) => void;
@@ -236,6 +288,7 @@ describe("chat composer controls", () => {
     expect(stop.closest("form")).toBe(input.closest("form"));
     expect(stop).toBeEnabled();
     fireEvent.change(input, { target: { value: "Keep this draft" } });
+    expect(screen.getByRole("button", { name: "Send message" })).toBeEnabled();
     fireEvent.click(stop);
     expect(await screen.findByRole("button", { name: "Stopping response" })).toBeDisabled();
     expect(fetcher.mock.calls.filter(([url]) => url === "/api/chat/messages")).toHaveLength(1);

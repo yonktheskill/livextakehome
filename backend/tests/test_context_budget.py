@@ -256,3 +256,90 @@ def test_retrieval_cannot_read_other_conversations_future_or_own_narration(accou
     assert retrieve(run_id, "", role="assistant") == []
     for excluded_run in (future, other_run):
         assert retrieve(run_id, "", source_id=Run.get_by_id(excluded_run).message_id) == []
+
+
+@pytest.mark.parametrize("unit", ["meeting notes ", '午后🙂\\"\n'])
+def test_paginated_source_recovers_tail_and_only_covers_contiguous_whole(account, unit):
+    user, _ = account
+    tail = " Attendee: Trailing Person trailing@example.test"
+    text = (unit * 12000)[: 12000 - len(tail)] + tail
+    original = submit(user, text)
+    message = Run.get_by_id(original).message
+    run_id = submit(user, "retry")
+    settings = Settings()
+    pages = []
+    offset = 0
+    while True:
+        page = retrieve(run_id, "", settings=settings, source_id=message.id, offset=offset)[0]
+        assert estimate([page], settings) <= settings.context_retrieval_tokens
+        assert page["offset"] == offset
+        assert page["end_offset"] > offset
+        assert page["created_at"] == message.created_at
+        assert page["time_zone"] == message.time_zone
+        assert page["conversation_id"] == message.conversation_id
+        assert page["total_characters"] == len(text)
+        pages.append(page)
+        if page["next_offset"] is None:
+            assert page["complete"]
+            break
+        assert not page["complete"]
+        assert message.id not in covered_sources([data_message(HISTORY, pages)])
+        offset = page["next_offset"]
+        assert len(pages) < 50
+    assert len(pages) > 1
+    assert "".join(p["content"] for p in pages) == text
+    assert tail in pages[-1]["content"]
+    assert pages[-1]["truncated"]  # A complete suffix is not the full source.
+    assert message.id not in covered_sources([data_message(HISTORY, pages[-1:])])
+    assert message.id not in covered_sources([data_message(HISTORY, pages[1:])])
+    assert message.id not in covered_sources([data_message(HISTORY, pages[:1] + pages[2:])])
+    assert message.id in covered_sources([data_message(HISTORY, pages)])
+
+
+@pytest.mark.parametrize("offset", [-1, True, 1.5, "1", None, 100000])
+def test_invalid_source_offsets(account, offset):
+    user, _ = account
+    original = submit(user, "original")
+    run_id = submit(user, "retry")
+    with pytest.raises(ValueError):
+        retrieve(run_id, "", source_id=Run.get_by_id(original).message_id, offset=offset)
+    with pytest.raises(ValueError):
+        retrieve(run_id, "", offset=1)
+
+
+def test_continuations_preserve_source_scopes(account):
+    user, _ = account
+    first = submit(user, "original")
+    run_id = submit(user, "retry")
+    current = Run.get_by_id(run_id).message_id
+    future = submit(user, "future private text")
+    other = User.create(email="scoped@example.test", password_hash="unused")
+    Conversation.create(user=other)
+    private = submit(other, "other private text")
+    for forbidden in (current, Run.get_by_id(future).message_id, Run.get_by_id(private).message_id):
+        assert retrieve(run_id, "", source_id=forbidden, offset=1) == []
+    assert (
+        retrieve(run_id, "", source_id=Run.get_by_id(first).message_id, offset=2)[0]["content"]
+        == "iginal"
+    )
+
+
+def test_submission_limit_matches_composer_and_current_tail_fits_default(account):
+    import re
+    from pathlib import Path
+
+    from pydantic import ValidationError
+
+    from app.api.chat import Submission
+
+    composer = Path(__file__).parents[2] / "frontend/components/chat.tsx"
+    maximum = int(re.search(r"MAX_MESSAGE_CHARACTERS = (\d+)", composer.read_text())[1])
+    assert maximum == 6000 == Submission.model_json_schema()["properties"]["content"]["maxLength"]
+    tail = "Attendee: Tail Person tail@example.test"
+    text = ("Meeting details " * 1000)[: maximum - len(tail)] + tail
+    assert Submission(content=text, client_request_id=uuid4()).content == text
+    with pytest.raises(ValidationError):
+        Submission(content=text + "x", client_request_id=uuid4())
+    user, _ = account
+    messages = assemble(submit(user, text), Settings(), definitions())
+    assert json.loads(messages[-1]["content"])["content"].endswith(tail)

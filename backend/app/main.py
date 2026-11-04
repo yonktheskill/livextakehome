@@ -1,16 +1,59 @@
 import asyncio
-from collections import defaultdict, deque
+from collections import OrderedDict, deque
 from contextlib import asynccontextmanager
+from ipaddress import ip_address, ip_network
 from time import monotonic
 
-from fastapi import FastAPI, Request
+from fastapi import FastAPI, HTTPException, Request
 from fastapi.exceptions import RequestValidationError
 from fastapi.responses import JSONResponse
 
 from app.api import auth, chat, connection
 from app.core.config import Settings
 from app.core.security import KeyVault
-from app.db.database import initialize
+from app.db.database import initialize, query
+
+
+class RateBuckets:
+    """Finite categories, idle expiry and bounded memory without quota resets."""
+
+    def __init__(self, capacity=10000):
+        self.capacity = capacity
+        self.buckets = OrderedDict()
+
+    def allow(self, key, now):
+        while self.buckets:
+            oldest, bucket = next(iter(self.buckets.items()))
+            if bucket[-1] > now - 60:
+                break
+            del self.buckets[oldest]
+        bucket = self.buckets.get(key)
+        if bucket is None:
+            if len(self.buckets) >= self.capacity:
+                return False
+            bucket = deque()
+            self.buckets[key] = bucket
+        while bucket and bucket[0] <= now - 60:
+            bucket.popleft()
+        if len(bucket) >= 30:
+            return False
+        bucket.append(now)
+        self.buckets.move_to_end(key)
+        return True
+
+
+def auth_address(request, settings):
+    peer = request.client.host if request.client else "unknown"
+    try:
+        trusted = any(
+            ip_address(peer) in ip_network(cidr) for cidr in settings.trusted_ingress_cidrs
+        )
+        if trusted:
+            # A single validated address, never an arbitrary forwarded chain.
+            return str(ip_address(request.headers.get("x-real-ip", peer)))
+    except ValueError:
+        pass
+    return peer
 
 
 def create_app(settings=None, provider=None):
@@ -84,7 +127,7 @@ def create_app(settings=None, provider=None):
 
     app = FastAPI(lifespan=lifespan)
     app.state.settings = settings
-    buckets: dict[tuple[str, str], deque[float]] = defaultdict(deque)
+    buckets = RateBuckets()
 
     @app.middleware("http")
     async def guards(request: Request, call_next):
@@ -94,18 +137,26 @@ def create_app(settings=None, provider=None):
                 return JSONResponse({"detail": "Origin is not allowed."}, status_code=403)
             if request.headers.get("sec-fetch-site") == "cross-site":
                 return JSONResponse({"detail": "Cross-site request denied."}, status_code=403)
-            if request.url.path.startswith(("/api/auth/", "/api/chat/")):
-                address = request.client.host if request.client else "unknown"
-                key = (address, request.url.path)
-                now = monotonic()
-                bucket = buckets[key]
-                while bucket and bucket[0] < now - 60:
-                    bucket.popleft()
-                if len(bucket) >= 30:
+            category = (
+                "auth"
+                if request.url.path in {"/api/auth/register", "/api/auth/login"}
+                else "chat"
+                if request.url.path.startswith("/api/chat/")
+                else None
+            )
+            if category:
+                if category == "chat":
+                    try:
+                        user = await query(auth.current_sync, request.cookies.get(auth.COOKIE))
+                    except HTTPException as exc:
+                        return JSONResponse({"detail": exc.detail}, status_code=exc.status_code)
+                    identity = str(user.id)
+                else:
+                    identity = auth_address(request, settings)
+                if not buckets.allow((category, identity), monotonic()):
                     return JSONResponse(
                         {"detail": "Too many requests; retry in a minute."}, status_code=429
                     )
-                bucket.append(now)
         return await call_next(request)
 
     @app.exception_handler(RequestValidationError)

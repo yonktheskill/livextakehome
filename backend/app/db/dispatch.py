@@ -35,7 +35,10 @@ def prepare_action(run, conn, name, encoded, fingerprint, confirmation_required,
             if existing.state in {"dispatching", "unknown", "succeeded", "failed"}:
                 return existing.id, False
             if existing.fingerprint == fingerprint:
-                return existing.id, existing.state == "awaiting_confirmation"
+                return existing.id, confirmation_required and existing.state in {
+                    "prepared",
+                    "awaiting_confirmation",
+                }
             existing.state = "superseded"
             existing.logical_key = None
             existing.save()
@@ -48,7 +51,7 @@ def prepare_action(run, conn, name, encoded, fingerprint, confirmation_required,
             logical_key=digest(f"{live.id}:{name}:{encoded}"),
             request=json.dumps(request or {}, sort_keys=True),
             fingerprint=fingerprint,
-            state="awaiting_confirmation" if confirmation_required else "prepared",
+            state="prepared",
         )
         if confirmation_required:
             import time
@@ -126,3 +129,73 @@ def settle(action_id, state, result):
                     {"message_id": message.id, "text": message.content},
                 )
         return True
+
+
+def inspect_unknown(action_id):
+    """Read-only frozen evidence. Digest binds resolution to this exact snapshot."""
+    action = Action.get_by_id(action_id)
+    evidence = {
+        "action_id": action.id,
+        "run_id": action.run_id,
+        "state": action.state,
+        "kind": action.kind,
+        "inputs": json.loads(action.inputs),
+        "request": json.loads(action.request or "{}"),
+        "fingerprint": action.fingerprint,
+        "result": json.loads(action.result),
+    }
+    return {"digest": digest(json.dumps(evidence, sort_keys=True)), "evidence": safe_data(evidence)}
+
+
+def resolve_unknown(action_id, expected_digest, outcome, operator, note, observation):
+    """Operator attestation only: never dispatch, reset a lease, or infer success."""
+    from app.core.guardrails import require_content
+
+    if outcome not in {"succeeded", "failed"} or not operator.strip() or not note.strip():
+        raise ValueError("Explicit outcome, operator and verification note are required")
+    require_content({"operator": operator, "note": note, "observation": observation})
+    with db.atomic("IMMEDIATE"):
+        action = Action.get_by_id(action_id)
+        snapshot = inspect_unknown(action_id)
+        if snapshot["digest"] != expected_digest:
+            raise ValueError("Evidence changed; inspect again")
+        if action.state != "unknown" or action.run.status in {"queued", "running"}:
+            raise ValueError("Only inactive unknown actions can be reconciled")
+        if not isinstance(observation, dict) or not observation:
+            raise ValueError("Observed external evidence is required")
+        if outcome == "succeeded":
+            identity = "id" if action.kind == "create_event_type" else "uid"
+            if not observation.get(identity):
+                raise ValueError("Observed resource identity is required")
+            frozen = json.loads(action.request or "{}")
+            target = frozen.get("validation", {}).get(identity)
+            if target is not None and observation[identity] != target:
+                if not (
+                    action.kind == "reschedule_booking"
+                    and observation.get("rescheduledFromUid") == target
+                ):
+                    raise ValueError("Observed resource does not match frozen target or UID lineage")
+            result = {"response": observation, "validated": frozen.get("validation", {})}
+        else:
+            result = {
+                "error": "Operator verified action did not succeed",
+                "observation": observation,
+            }
+        # Reuse canonical receipt creation inside the same transaction. This temporary
+        # state is never committed or visible to a dispatcher.
+        Action.update(state="dispatching").where(Action.id == action_id).execute()
+        settle(action_id, outcome, result)
+        emit(
+            action.run_id,
+            "action.reconciled",
+            {
+                "action_id": action_id,
+                "operator": operator,
+                "note": note,
+                "previous_evidence": snapshot,
+                "outcome": outcome,
+                "observation": observation,
+            },
+        )
+        # Preserve the original run failure and its events as historical evidence.
+        return inspect_unknown(action_id)

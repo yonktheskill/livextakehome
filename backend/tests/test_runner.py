@@ -2,6 +2,7 @@ import json
 from uuid import uuid4
 
 import pytest
+from conftest import start_test_run
 from test_tools import fixture_executor
 
 from app.agent.context import assemble, retrieve
@@ -19,6 +20,7 @@ from app.tools.executor import Waiting
 async def test_runner_persists_chunks_before_replay_and_finishes(account):
     user, vault = account
     run_id = accept(user, "hello", str(uuid4()))["run_id"]
+    start_test_run(run_id)
     runner = Runner(
         Settings(llm_provider="fake"),
         vault,
@@ -46,6 +48,7 @@ async def test_runner_persists_chunks_before_replay_and_finishes(account):
 async def test_model_steps_have_paragraph_boundaries_and_keep_token_spacing(account):
     user, vault = account
     run_id = accept(user, "retry", str(uuid4()))["run_id"]
+    start_test_run(run_id)
     provider = FakeProvider(
         steps=[
             [
@@ -82,6 +85,7 @@ async def test_model_steps_have_paragraph_boundaries_and_keep_token_spacing(acco
 async def test_confirmation_prompt_starts_a_new_paragraph(account):
     user, vault = account
     run_id = accept(user, "cancel", str(uuid4()))["run_id"]
+    start_test_run(run_id)
     runner = Runner(
         Settings(llm_provider="fake"),
         vault,
@@ -112,6 +116,7 @@ async def test_confirmation_prompt_starts_a_new_paragraph(account):
 async def test_event_type_confirmation_is_persisted_and_streamed_as_readable_chat(account):
     user, vault = account
     run_id = accept(user, "Book a 30-minute meeting", str(uuid4()))["run_id"]
+    start_test_run(run_id)
     provider = FakeProvider(
         steps=[
             [
@@ -147,6 +152,7 @@ async def test_event_type_confirmation_is_persisted_and_streamed_as_readable_cha
 async def test_correction_interrupts_before_tool_dispatch(account):
     user, vault = account
     run_id = accept(user, "book", str(uuid4()))["run_id"]
+    start_test_run(run_id)
 
     class CorrectingProvider:
         async def stream(self, messages, tools):
@@ -165,6 +171,7 @@ async def test_correction_interrupts_before_tool_dispatch(account):
 async def test_provider_failure_does_not_publish_unchecked_partial_message(account):
     user, vault = account
     run_id = accept(user, "hello", str(uuid4()))["run_id"]
+    start_test_run(run_id)
 
     class BrokenProvider:
         async def stream(self, messages, tools):
@@ -184,9 +191,75 @@ def test_context_compacts_and_retrieves_original_timestamp(account):
     run_id = None
     for index in range(65):
         run_id = accept(user, f"message {index} candidate Alice", str(uuid4()))["run_id"]
+        start_test_run(run_id)
     context = assemble(run_id)
     assert Snapshot.select().count() == 1
     assert len(context) <= 24
     assert any("Canonical action evidence" in m["content"] for m in context)
     found = retrieve(run_id, "message 0")
     assert found and "created_at" in found[0] and "time_zone" in found[0]
+
+
+@pytest.mark.asyncio
+async def test_history_schema_and_runner_follow_continuations(account):
+    user, vault = account
+    text = "Meeting notes. " * 790 + "Attendee: Tail tail@example.test"
+    original = accept(user, text, str(uuid4()))["run_id"]
+    start_test_run(original)
+    source_id = Run.get_by_id(original).message_id
+    run_id = accept(user, "retry " + "x" * 5994, str(uuid4()))["run_id"]
+    start_test_run(run_id)
+    pages = []
+
+    class PagingProvider:
+        async def stream(self, messages, tools):
+            schema = next(t["function"] for t in tools if t["function"]["name"] == "search_history")
+            assert schema["parameters"]["properties"]["offset"] == {"type": "integer", "minimum": 0}
+            assert "next_offset" in schema["description"]
+            results = [m for m in messages if m["role"] == "tool"]
+            offset = 0
+            if results:
+                page = json.loads(results[-1]["content"])[0]
+                pages.append(page)
+                offset = page["next_offset"]
+                if offset is None:
+                    yield ProviderEvent("text_delta", text="Retrieved the trailing attendee.")
+                    return
+            yield ProviderEvent(
+                "tool_call",
+                name="search_history",
+                call_id=f"page-{offset}",
+                arguments={"query": "", "source_id": source_id, "offset": offset},
+            )
+
+    await Runner(Settings(llm_provider="fake"), vault, PagingProvider()).execute(run_id)
+    assert Run.get_by_id(run_id).status == "succeeded"
+    assert len(pages) > 1
+    assert "".join(p["content"] for p in pages) == text
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "extra",
+    [
+        {"offset": -1},
+        {"offset": True},
+        {"offset": 1.5},
+        {"offset": "1"},
+        {"offset": 1, "source_id": ""},
+        {"offset": 0},
+        {"unexpected": 1},
+        {"offset": 99999, "source_id": "original"},
+    ],
+)
+async def test_history_runner_rejects_invalid_offsets(account, extra):
+    user, vault = account
+    original = accept(user, "original", str(uuid4()))["run_id"]
+    start_test_run(original)
+    run_id = accept(user, "retry", str(uuid4()))["run_id"]
+    start_test_run(run_id)
+    if extra.get("source_id") == "original":
+        extra = {**extra, "source_id": Run.get_by_id(original).message_id}
+    runner = Runner(Settings(llm_provider="fake"), vault, FakeProvider())
+    result = await runner.tool(run_id, "search_history", {"query": "", **extra}, "invalid")
+    assert "error" in result
