@@ -383,7 +383,7 @@ export function Chat({ user }: { user: User }) {
               </div>
             ) : null}
             {voice.active && (
-              <div className="voice-controls" aria-label="Voice chat controls">
+              <div className="composer voice-controls voice-composer" aria-label="Voice chat controls">
                 <span role="status">
                   {voice.state === "connecting"
                     ? "Connecting voice…"
@@ -420,7 +420,7 @@ export function Chat({ user }: { user: User }) {
                   <PhoneOff size={18} />
                   End
                 </Button>
-                <small>Sending a typed message ends voice first.</small>
+                <small>End voice chat to return to messaging.</small>
               </div>
             )}
             {voice.playbackBlocked && (
@@ -436,174 +436,178 @@ export function Chat({ user }: { user: User }) {
                 {voice.error}
               </p>
             )}
-            <form
-              className="composer"
-              onDragOver={(e) => {
-                if (e.dataTransfer.types.includes("Files")) e.preventDefault();
-              }}
-              onDrop={(e) => {
-                e.preventDefault();
-                addImages(Array.from(e.dataTransfer.files));
-              }}
-              onPaste={(e) => {
-                const files = Array.from(e.clipboardData.items)
-                  .filter((item) => item.kind === "file")
-                  .map((item) => item.getAsFile())
-                  .filter((file): file is File => !!file);
-                if (files.length) {
-                  e.preventDefault();
-                  addImages(files);
-                }
-              }}
-              onSubmit={(e) => {
-                e.preventDefault();
-                void submit();
-              }}
-            >
-              <input
-                ref={fileInput}
-                type="file"
-                className="sr-only"
-                accept="image/jpeg,image/png,image/webp"
-                multiple
-                aria-label="Choose image attachments"
-                onChange={(e) => {
-                  addImages(Array.from(e.target.files ?? []));
-                  e.target.value = "";
-                }}
-              />
-              {!!images.length && (
-                <ul className="draft-images" aria-label="Image attachments">
-                  {images.map((image, i) => (
-                    <li key={image.key}>
-                      {/* eslint-disable-next-line @next/next/no-img-element */}
-                      {image.preview && <img src={image.preview} alt={`Image ${i + 1} preview`} />}
-                      <span>{image.file.name}</span>
-                      <span role="status">
-                        {image.status === "processing"
-                          ? "Processing image…"
-                          : image.status === "uploading"
-                            ? "Uploading image…"
-                            : image.status === "ready"
-                              ? "Ready"
-                              : "Upload failed"}
-                      </span>
-                      {image.error && <span role="alert">{image.error}</span>}
-                      {image.status === "error" && (
-                        <Button type="button" onClick={() => void processImage(image)}>
-                          Retry upload
-                        </Button>
-                      )}
-                      <Button
-                        type="button"
-                        aria-label={`Remove image ${i + 1}`}
-                        onClick={() => removeImages(new Set([image.key]))}
-                      >
-                        <X size={16} />
-                      </Button>
-                    </li>
-                  ))}
-                </ul>
-              )}
-              {imageError && <p role="alert">{imageError}</p>}
-              {failedCaption && draft !== failedCaption && (
-                <div className="recovery-box">
-                  <p>Previous caption: {failedCaption}</p>
-                  <Button
-                    type="button"
-                    onClick={() => {
-                      setDraft((current) => (current ? `${failedCaption}\n${current}` : failedCaption));
-                      setFailedCaption("");
-                    }}
-                  >
-                    Restore previous caption
-                  </Button>
-                </div>
-              )}
-              <label className="sr-only" htmlFor="message">
-                Message HelpBook
-              </label>
-              <Textarea
-                id="message"
-                ref={input}
-                value={draft}
-                onChange={(e) => setDraft(e.target.value)}
-                aria-describedby="message-length"
-                invalid={tooLong}
-                placeholder="Message HelpBook…"
-                rows={2}
-                onKeyDown={(e) => {
-                  if (e.key === "Enter" && !e.shiftKey && !e.nativeEvent.isComposing) {
+            {!voice.active && (
+              <>
+                <form
+                  className="composer"
+                  onDragOver={(e) => {
+                    if (e.dataTransfer.types.includes("Files")) e.preventDefault();
+                  }}
+                  onDrop={(e) => {
+                    e.preventDefault();
+                    addImages(Array.from(e.dataTransfer.files));
+                  }}
+                  onPaste={(e) => {
+                    const files = Array.from(e.clipboardData.items)
+                      .filter((item) => item.kind === "file")
+                      .map((item) => item.getAsFile())
+                      .filter((file): file is File => !!file);
+                    if (files.length) {
+                      e.preventDefault();
+                      addImages(files);
+                    }
+                  }}
+                  onSubmit={(e) => {
                     e.preventDefault();
                     void submit();
-                  }
-                }}
-              />
-              <div className="composer-bottom">
-                <Button
-                  type="button"
-                  className="attach-button"
-                  aria-label="Attach images"
-                  title="Attach images (or paste/drop a screenshot)"
-                  disabled={images.length >= MAX_IMAGES}
-                  onClick={() => fileInput.current?.click()}
+                  }}
                 >
-                  <Paperclip size={20} />
-                </Button>
-                {voice.enabled && !voice.active && (
-                  <Button
-                    type="button"
-                    className="voice-button"
-                    aria-label="Start voice chat"
-                    disabled={chat.loading || chat.sending || !!chat.pending || !!chat.run}
-                    onClick={() => void voice.start()}
-                  >
-                    <Mic size={19} />
-                    <span>Voice</span>
-                  </Button>
-                )}
-                {showStop ? (
-                  <Button
-                    aria-label={chat.stopping ? "Stopping response" : "Stop response"}
-                    title={chat.stopping ? "Stopping…" : "Stop response"}
-                    className="send-button stop-button"
-                    type="button"
-                    disabled={chat.stopping}
-                    onClick={() => void chat.stop()}
-                  >
-                    {chat.stopping ? (
-                      <span className="button-loader" />
-                    ) : (
-                      <Square size={17} fill="currentColor" />
+                  <input
+                    ref={fileInput}
+                    type="file"
+                    className="sr-only"
+                    accept="image/jpeg,image/png,image/webp"
+                    multiple
+                    aria-label="Choose image attachments"
+                    onChange={(e) => {
+                      addImages(Array.from(e.target.files ?? []));
+                      e.target.value = "";
+                    }}
+                  />
+                  {!!images.length && (
+                    <ul className="draft-images" aria-label="Image attachments">
+                      {images.map((image, i) => (
+                        <li key={image.key}>
+                          {/* eslint-disable-next-line @next/next/no-img-element */}
+                          {image.preview && <img src={image.preview} alt={`Image ${i + 1} preview`} />}
+                          <span>{image.file.name}</span>
+                          <span role="status">
+                            {image.status === "processing"
+                              ? "Processing image…"
+                              : image.status === "uploading"
+                                ? "Uploading image…"
+                                : image.status === "ready"
+                                  ? "Ready"
+                                  : "Upload failed"}
+                          </span>
+                          {image.error && <span role="alert">{image.error}</span>}
+                          {image.status === "error" && (
+                            <Button type="button" onClick={() => void processImage(image)}>
+                              Retry upload
+                            </Button>
+                          )}
+                          <Button
+                            type="button"
+                            aria-label={`Remove image ${i + 1}`}
+                            onClick={() => removeImages(new Set([image.key]))}
+                          >
+                            <X size={16} />
+                          </Button>
+                        </li>
+                      ))}
+                    </ul>
+                  )}
+                  {imageError && <p role="alert">{imageError}</p>}
+                  {failedCaption && draft !== failedCaption && (
+                    <div className="recovery-box">
+                      <p>Previous caption: {failedCaption}</p>
+                      <Button
+                        type="button"
+                        onClick={() => {
+                          setDraft((current) => (current ? `${failedCaption}\n${current}` : failedCaption));
+                          setFailedCaption("");
+                        }}
+                      >
+                        Restore previous caption
+                      </Button>
+                    </div>
+                  )}
+                  <label className="sr-only" htmlFor="message">
+                    Message HelpBook
+                  </label>
+                  <Textarea
+                    id="message"
+                    ref={input}
+                    value={draft}
+                    onChange={(e) => setDraft(e.target.value)}
+                    aria-describedby="message-length"
+                    invalid={tooLong}
+                    placeholder="Message HelpBook…"
+                    rows={2}
+                    onKeyDown={(e) => {
+                      if (e.key === "Enter" && !e.shiftKey && !e.nativeEvent.isComposing) {
+                        e.preventDefault();
+                        void submit();
+                      }
+                    }}
+                  />
+                  <div className="composer-bottom">
+                    <Button
+                      type="button"
+                      className="attach-button"
+                      aria-label="Attach images"
+                      title="Attach images (or paste/drop a screenshot)"
+                      disabled={images.length >= MAX_IMAGES}
+                      onClick={() => fileInput.current?.click()}
+                    >
+                      <Paperclip size={20} />
+                    </Button>
+                    {voice.enabled && !voice.active && (
+                      <Button
+                        type="button"
+                        className="voice-button"
+                        aria-label="Start voice chat"
+                        disabled={chat.loading || chat.sending || !!chat.pending || !!chat.run}
+                        onClick={() => void voice.start()}
+                      >
+                        <Mic size={19} />
+                        <span>Voice</span>
+                      </Button>
                     )}
-                  </Button>
-                ) : (
-                  <Button
-                    aria-label={chat.run ? "Steer response" : "Send message"}
-                    title={chat.run ? "Steer response" : "Send message"}
-                    className={`send-button${chat.run ? " steer-button" : ""}`}
-                    type="submit"
-                    disabled={
-                      tooLong ||
-                      (!draft.trim() && !images.length) ||
-                      imagesBusy ||
-                      chat.sending ||
-                      chat.loading ||
-                      voice.state === "connecting" ||
-                      voice.state === "stopping" ||
-                      !!chat.pending
-                    }
-                  >
-                    {chat.sending ? <span className="button-loader" /> : <ArrowUp size={22} />}
-                  </Button>
-                )}
-              </div>
-            </form>
-            <p id="message-length" role={tooLong ? "alert" : undefined}>
-              {tooLong
-                ? "Message is too long. Shorten it to 6,000 characters before sending."
-                : `${draftLength.toLocaleString("en-US")} / 6,000 characters`}
-            </p>
+                    {showStop ? (
+                      <Button
+                        aria-label={chat.stopping ? "Stopping response" : "Stop response"}
+                        title={chat.stopping ? "Stopping…" : "Stop response"}
+                        className="send-button stop-button"
+                        type="button"
+                        disabled={chat.stopping}
+                        onClick={() => void chat.stop()}
+                      >
+                        {chat.stopping ? (
+                          <span className="button-loader" />
+                        ) : (
+                          <Square size={17} fill="currentColor" />
+                        )}
+                      </Button>
+                    ) : (
+                      <Button
+                        aria-label={chat.run ? "Steer response" : "Send message"}
+                        title={chat.run ? "Steer response" : "Send message"}
+                        className={`send-button${chat.run ? " steer-button" : ""}`}
+                        type="submit"
+                        disabled={
+                          tooLong ||
+                          (!draft.trim() && !images.length) ||
+                          imagesBusy ||
+                          chat.sending ||
+                          chat.loading ||
+                          voice.state === "connecting" ||
+                          voice.state === "stopping" ||
+                          !!chat.pending
+                        }
+                      >
+                        {chat.sending ? <span className="button-loader" /> : <ArrowUp size={22} />}
+                      </Button>
+                    )}
+                  </div>
+                </form>
+                <p id="message-length" role={tooLong ? "alert" : undefined}>
+                  {tooLong
+                    ? "Message is too long. Shorten it to 6,000 characters before sending."
+                    : `${draftLength.toLocaleString("en-US")} / 6,000 characters`}
+                </p>
+              </>
+            )}
           </div>
           <Button
             className="scroll-bottom"

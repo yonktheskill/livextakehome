@@ -834,11 +834,15 @@ label {
   color: var(--muted);
 }
 .composer {
+  --composer-padding: 16px 17px 12px;
+  --composer-text-height: calc(17px * 1.8 * 2);
+  --composer-action-height: 44px;
+  --composer-row-gap: 5px;
   border: 1px solid var(--selection);
   border-radius: 13px;
   box-shadow: 0 3px 15px color-mix(in srgb, var(--background-darker) 45%, transparent);
   background: var(--background-dark);
-  padding: 16px 17px 12px;
+  padding: var(--composer-padding);
 }
 .composer:focus-within {
   border-color: var(--blue);
@@ -855,7 +859,7 @@ label {
   color: var(--foreground);
   background: transparent;
   max-height: 150px;
-  min-height: 45px;
+  min-height: var(--composer-text-height);
   line-height: 1.8;
 }
 .composer textarea::placeholder {
@@ -865,12 +869,13 @@ label {
 .composer-bottom {
   display: flex;
   align-items: center;
+  gap: 0.5rem;
   justify-content: flex-end;
-  margin-top: 5px;
+  margin-top: var(--composer-row-gap);
 }
 .send-button {
-  width: 44px;
-  height: 44px;
+  width: var(--composer-action-height);
+  height: var(--composer-action-height);
   border: 0;
   background: var(--blue);
   color: var(--background-darker);
@@ -1162,7 +1167,7 @@ label {
     padding: 8px 16px 12px;
   }
   .composer {
-    padding: 12px 13px 10px;
+    --composer-padding: 12px 13px 10px;
   }
   .connection-banner {
     padding: 9px 16px;
@@ -1354,6 +1359,16 @@ label {
   border-radius: 0.75rem;
   font-size: 0.8rem;
 }
+.voice-composer {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto auto;
+  grid-template-rows: minmax(var(--composer-text-height), auto) minmax(var(--composer-action-height), auto);
+  gap: var(--composer-row-gap) 0.5rem;
+  margin-bottom: 0;
+  padding: var(--composer-padding);
+  border-color: var(--selection);
+  border-radius: 13px;
+}
 .voice-controls > [role="status"] {
   margin-right: auto;
 }
@@ -1365,4 +1380,15 @@ label {
   font-size: 0.8rem;
   color: var(--red);
   margin: 0 0 0.5rem;
+}
+
+.voice-composer > [role="status"] {
+  grid-column: 1 / -1;
+}
+.voice-composer > .voice-button {
+  grid-row: 2;
+}
+.voice-composer > small {
+  grid-column: 1;
+  grid-row: 2;
 }
